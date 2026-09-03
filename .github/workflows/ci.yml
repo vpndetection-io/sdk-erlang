@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Every OTP release still supported upstream. The floor is 27 because
+        # the client decodes JSON with stdlib's `json`, which arrived there.
+        otp: ['27', '28', '29']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          rebar3-version: '3'
+      - run: rebar3 compile
+      - run: rebar3 eunit
+      - run: rebar3 xref
+
+  dialyzer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '27'
+          rebar3-version: '3'
+      - uses: actions/cache@v6
+        with:
+          path: _build/default/*_plt
+          key: plt-${{ runner.os }}-otp27-${{ hashFiles('rebar.config') }}
+      - run: rebar3 dialyzer

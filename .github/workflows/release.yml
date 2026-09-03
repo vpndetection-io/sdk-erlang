@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '27'
+          rebar3-version: '3'
+      # The tag only TRIGGERS this; hex publishes whatever the .app.src says.
+      # Without this check, tagging v1.0.1 against a 1.0.0 manifest silently
+      # republishes 1.0.0, or fails as "already published" with a confusing message.
+      - name: Tag must match the application version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          vsn="$(sed -n 's/.*{vsn, "\([^"]*\)".*/\1/p' src/vpndetection.app.src)"
+          if [ "$tag" != "$vsn" ] ; then
+            echo "tag $tag does not match src/vpndetection.app.src version $vsn" >&2
+            exit 1
+          fi
+      - run: rebar3 eunit
+      # --repo hexpm is REQUIRED, not decoration: without it rebar3_hex takes a
+      # code path that never merges the environment into the repo config, so
+      # HEX_API_KEY is ignored and this fails with "No write key found for user"
+      # however correctly the secret is set.
+      - run: rebar3 as publish hex publish --repo hexpm --yes
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}

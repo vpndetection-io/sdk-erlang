@@ -29,21 +29,6 @@ maps:get(is_vpn, Result).   % true
 
 Every call answers `{ok, Term}` or `{error, Error}`. A client holds a cache, which is a process, so build one somewhere long lived and call `vpndetection:close(Client)` when you are finished with it.
 
-### Absent is not false
-
-A result is a map, and the fields your plan does not include are simply **not in it**. That is a different answer from a field being present and `false`: absent means "not in your plan", `false` means "we checked, and no".
-
-```erlang
-{ok, Result} = vpndetection:lookup(Client, <<"1.1.1.1">>),
-
-maps:get(is_vpn, Result).                    % false          - checked, and it is not a VPN
-maps:find(is_hosting, Result).               % error          - not in the free plan
-maps:get(is_hosting, Result, undefined).     % undefined      - the same thing, with a default
-maps:get(is_hosting, Result, false).         % false          - when you only care if it is flagged
-```
-
-Use `maps:get(Key, Result, false)` when you just want to know whether an address is flagged, and `maps:find/2` or `maps:is_key/2` when telling the two apart matters. `maps:get(raw, Result)` gives you the response exactly as it came off the wire, with its original binary keys.
-
 ### With an API key
 
 An API key raises your quota, and raises your features on a paid plan. Create one in the [console](https://app.vpndetection.io), then pass it in:
@@ -159,6 +144,15 @@ If your key carries the `db.download` scope, the licensed datasets are available
 ```
 
 `database_download_url/3` returns a time-limited link rather than the bytes, so you choose how to transfer a file that can run to gigabytes.
+
+### Absent is not false
+
+Fields your plan does not include are simply not in the result map. Absent means "not in your plan"; a present `false` means "we checked, and no".
+
+```erlang
+maps:get(is_hosting, Result, false).   % when you only want the flag
+maps:is_key(is_hosting, Result).       % whether your plan carries the field
+```
 
 ## Other Libraries
 

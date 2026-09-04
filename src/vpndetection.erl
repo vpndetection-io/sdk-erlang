@@ -15,7 +15,8 @@
 -export([is_bogon/1, is_bogon/2]).
 -export([lookup/2, lookup/3, lookup_batch/2, lookup_batch/3]).
 -export([database_list/1, database_metadata/2, database_checksums/3,
-         database_downloads/1, database_download_url/3]).
+         database_downloads/1, database_download_url/3, database_download/4,
+         database_download_bytes/3]).
 
 -export_type([client/0, options/0, lookup_options/0, batch_options/0, format/0]).
 
@@ -145,7 +146,17 @@ lookup_batch(Client, Ips, Options) ->
     Concurrency = maps:get(concurrency, Options, maps:get(concurrency, Client)),
     dispatch(fun(Ip) -> lookup(Client, Ip, Options) end, Unique, Concurrency, #{}, #{}, #{}).
 
-%% @doc The datasets your organization is licensed to download.
+%% @doc The dataset FAMILIES your organization is licensed to download.
+%%
+%% A licence covers a family (`vpn_ip'), while a download names one of its
+%% versions (`vpn_ip_v1'), so the ids {@link database_download/4} and
+%% {@link database_checksums/3} take come from a family's `&lt;&lt;"versions"&gt;&gt;'
+%% rather than from the family itself.
+%%
+%% Every database response keeps its wire keys as BINARIES. The lookup result is
+%% the one place a spec-defined name becomes an atom, because the dataset
+%% metadata is keyed by dataset column names, which are the server's to choose
+%% and would otherwise fill the atom table.
 -spec database_list(client()) -> {ok, [map()]} | {error, vpndetection_error:error()}.
 database_list(Client) ->
     unwrap(get_json(Client, <<"/api/v1/database/list">>, []), <<"datasets">>).
@@ -182,6 +193,93 @@ database_download_url(Client, Id, Format) ->
     Query = [{<<"id">>, bin(Id)}, {<<"format">>, atom_to_binary(Format)}],
     vpndetection_http:get_redirect(Client, <<"/api/v1/database/download">>, Query,
                                    maps:get(retries, Client)).
+
+%% @doc Download one dataset file to `Path', and answer how many bytes landed.
+%%
+%% The transfer is streamed, so nothing beyond a single chunk is ever held in
+%% memory whatever the dataset weighs. The bytes go to a neighboring `.part' file
+%% that is renamed only once the whole body has arrived: a transfer that dies
+%% halfway leaves neither a truncated file that reads as a complete dataset nor a
+%% `.part' for the next attempt to append to.
+%%
+%% The client's `timeout_ms' bounds the wait between chunks here rather than the
+%% whole transfer, because a deadline that suits a lookup is the wrong one for a
+%% gigabyte while a stalled transfer is stalled at any size.
+-spec database_download(client(), binary() | string(), format(), binary() | string()) ->
+    {ok, non_neg_integer()} | {error, vpndetection_error:error()}.
+database_download(Client, Id, Format, Path) ->
+    Dest = bin(Path),
+    Partial = <<Dest/binary, ".part">>,
+    case file:open(Partial, [write, binary, raw]) of
+        {ok, Fd} -> to_file(Client, Id, Format, Dest, Partial, Fd);
+        {error, Reason} -> {error, io_error(Partial, Reason)}
+    end.
+
+%% @doc Download one dataset file and hand back its bytes.
+%%
+%% This holds the ENTIRE file in memory, and the catalog spans five orders of
+%% magnitude, from `cdn_ip_v1' at 10 KB to `resproxy_ip_90d_v1' at 1.79 GB, so
+%% reach for it at the small end and use {@link database_download/4} for anything
+%% you have not measured. It transfers over exactly the same streamed path, so
+%% the bytes are the ones {@link database_download/4} would have written.
+-spec database_download_bytes(client(), binary() | string(), format()) ->
+    {ok, binary()} | {error, vpndetection_error:error()}.
+database_download_bytes(Client, Id, Format) ->
+    Sink = #{fold => fun(Chunk, Chunks) -> {ok, [Chunk | Chunks]} end, acc => []},
+    case transfer(Client, Id, Format, Sink) of
+        {ok, #{acc := Chunks}} -> {ok, iolist_to_binary(lists:reverse(Chunks))};
+        {error, Error} -> {error, Error}
+    end.
+
+to_file(Client, Id, Format, Dest, Partial, Fd) ->
+    Sink = #{acc => Fd, fold => fun(Chunk, Handle) ->
+        case file:write(Handle, Chunk) of
+            ok -> {ok, Handle};
+            {error, Reason} -> {error, message(Partial, Reason)}
+        end
+    end},
+    Transferred = transfer(Client, Id, Format, Sink),
+    Closed = file:close(Fd),
+    case {Transferred, Closed} of
+        {{ok, #{written := Written}}, ok} ->
+            rename(Partial, Dest, Written);
+        %% A close that fails is a write that failed: with the file gone the
+        %% count says nothing, so this is a failure rather than a short success.
+        {{ok, _}, {error, Reason}} ->
+            discard(Partial),
+            {error, io_error(Dest, Reason)};
+        {{error, Error}, _} ->
+            discard(Partial),
+            {error, Error}
+    end.
+
+%% The 302 is followed as a SECOND request that carries no credential: the
+%% presigned link authorizes itself, and forwarding the API key would hand it to
+%% a host with no business holding it.
+transfer(Client, Id, Format, Sink) ->
+    case database_download_url(Client, Id, Format) of
+        {ok, Url} -> vpndetection_http:get_stream(Client, Url, Sink, maps:get(retries, Client));
+        {error, Error} -> {error, Error}
+    end.
+
+rename(Partial, Dest, Written) ->
+    case file:rename(Partial, Dest) of
+        ok ->
+            {ok, Written};
+        {error, Reason} ->
+            discard(Partial),
+            {error, io_error(Dest, Reason)}
+    end.
+
+discard(Partial) ->
+    _ = file:delete(Partial),
+    ok.
+
+io_error(Path, Reason) ->
+    #{kind => io, retryable => false, message => message(Path, Reason)}.
+
+message(Path, Reason) ->
+    iolist_to_binary([Path, ": ", file:format_error(Reason)]).
 
 served(Client, Addr, Options) ->
     case cached(Client, Addr) of

@@ -105,7 +105,13 @@ database_responses_are_unwrapped_at_the_right_depth_test() ->
             <<"checksums">> => #{<<"md5">> => <<"m">>, <<"sha1">> => <<"s1">>,
                                  <<"sha256">> => <<"s256">>, <<"sha512">> => <<"s512">>}}},
         <<"/api/v1/database/list">> => #{body => #{
-            <<"datasets">> => [#{<<"id">> => <<"vpn_ip_extended_v1">>}]}},
+            <<"datasets">> => [#{
+                <<"base">> => <<"vpn_ip_extended">>, <<"name">> => <<"VPN IP Extended">>,
+                <<"standing">> => <<"licensed">>, <<"in_term">> => true,
+                <<"redistribution">> => <<"internal">>,
+                <<"versions">> => [#{<<"id">> => <<"vpn_ip_extended_v1">>, <<"version">> => 1,
+                                     <<"formats">> => [#{<<"format">> => <<"mmdb">>,
+                                                         <<"bytes">> => 42}]}]}]}},
         <<"/api/v1/database/downloads">> => #{body => #{
             <<"downloads">> => [#{<<"dataset_id">> => <<"vpn_ip_extended_v1">>}]}},
         <<"/api/v1/database/metadata">> => #{body => #{
@@ -118,7 +124,15 @@ database_responses_are_unwrapped_at_the_right_depth_test() ->
                    <<"sha256">> => <<"s256">>, <<"sha512">> => <<"s512">>}, Sums),
     ?assertEqual({ok, <<"s256">>}, maps:find(<<"sha256">>, Sums)),
 
-    ?assertEqual({ok, [#{<<"id">> => <<"vpn_ip_extended_v1">>}]}, vpndetection:database_list(Client)),
+    %% A licence covers a FAMILY, and the id a download takes lives one level down
+    %% under `versions'. The spec used to claim the family carried an `id' and a
+    %% `formats' of its own, so a caller who believed it had no way to name a
+    %% downloadable dataset at all.
+    {ok, [Family]} = vpndetection:database_list(Client),
+    ?assertEqual(<<"vpn_ip_extended">>, maps:get(<<"base">>, Family)),
+    ?assertEqual(error, maps:find(<<"id">>, Family)),
+    ?assertEqual([<<"vpn_ip_extended_v1">>],
+                 [maps:get(<<"id">>, V) || V <- maps:get(<<"versions">>, Family)]),
     ?assertEqual({ok, [#{<<"dataset_id">> => <<"vpn_ip_extended_v1">>}]},
                  vpndetection:database_downloads(Client)),
     {ok, Metadata} = vpndetection:database_metadata(Client, <<"vpn_ip_extended_v1">>),
@@ -136,7 +150,9 @@ the_download_redirect_is_returned_and_never_followed_test_() ->
         Client = vpndetection:new(#{base_url => Base, api_key => <<"k">>, cache => false,
                                     timeout_ms => 3000, retries => 0}),
 
-        {ok, Url} = vpndetection:database_download_url(Client, <<"vpn_ip_extended_v1">>, mmdb),
+        %% The origin points its redirect at the file the requested id names, and
+        %% `huge' is the one that announces five gigabytes and then stalls.
+        {ok, Url} = vpndetection:database_download_url(Client, <<"huge">>, mmdb),
 
         ?assertEqual(<<Base/binary, "/huge">>, Url),
         ?assertEqual(0, vpndetection_origin:hits(Origin, <<"/huge">>)),

@@ -10,13 +10,17 @@
 %% `Retry-After'; retrying works. A spent quota carries no such header and
 %% retrying will not help until the window rolls over or the limit is raised.
 %% The header is the only thing that distinguishes them.
+%% `io' is the one kind the API never causes: it is a local filesystem failure
+%% while a download is being written, which is the caller's disk rather than our
+%% service, and so is never worth retrying against the API.
 -type kind() :: bad_request
               | unauthorized
               | forbidden
               | rate_limited
               | quota_exceeded
               | server_error
-              | network.
+              | network
+              | io.
 
 -type error() :: #{
     kind := kind(),
@@ -34,6 +38,18 @@ from_response(Status, Headers, Body) ->
 
 %% @doc Classify a failure that never produced a response at all.
 -spec from_transport(term()) -> error().
+%% The sink refused the bytes, so nothing about the API is wrong and a second
+%% attempt would fail the same way. The message is built where the destination is
+%% known rather than reconstructed here.
+from_transport({sink_failed, Message}) when is_binary(Message) ->
+    #{kind => io, message => Message, retryable => false};
+%% A transfer that broke after bytes had already reached the sink. NOT retryable
+%% however transient the cause: those bytes are written, and repeating the
+%% request would append a second copy of the body to them.
+from_transport({transfer_failed, Written, Reason}) ->
+    #{kind => network, retryable => false,
+      message => iolist_to_binary(io_lib:format("the transfer failed after ~b bytes: ~p",
+                                                [Written, Reason]))};
 from_transport(Reason) ->
     #{kind => network, message => iolist_to_binary(io_lib:format("~p", [Reason])), retryable => true}.
 

@@ -7,6 +7,10 @@
 
 -export([start/1, start/2, stop/1, http/1, calls/1, peak/1, request/2]).
 
+%% Small enough that a canned body of any realistic size arrives in several
+%% pieces, so a sink that only ever handles one chunk fails here.
+-define(CHUNK_BYTES, 64).
+
 %% @doc `Routes' is keyed by the request path, with or without its leading slash,
 %% and percent decoded. A path with no route answers 400, which is what the API
 %% does for an address it cannot parse.
@@ -22,7 +26,7 @@ stop(Pid) ->
     ask(Pid, stop).
 
 http(Pid) ->
-    fun(#{url := Url}) -> ?MODULE:request(Pid, Url) end.
+    fun(Request) -> ?MODULE:request(Pid, Request) end.
 
 calls(Pid) ->
     ask(Pid, {stat, calls}).
@@ -30,14 +34,42 @@ calls(Pid) ->
 peak(Pid) ->
     ask(Pid, {stat, peak}).
 
-request(Pid, Url) ->
+%% A request carrying a sink is answered the way the real transport answers one:
+%% a 2xx body is folded through in pieces and never handed back whole, and
+%% anything else arrives whole because httpc streams only a success.
+request(Pid, #{url := Url} = Request) ->
     Ref = make_ref(),
     Pid ! {request, self(), Ref, Url},
-    receive
-        {Ref, Response} -> Response
+    Response = receive
+        {Ref, R} -> R
     after 15000 ->
         {error, stub_timeout}
+    end,
+    case {maps:find(sink, Request), Response} of
+        {{ok, Sink}, {ok, #{status := 200, headers := Headers, body := Body}}} ->
+            drain(Body, Headers, Sink);
+        _ ->
+            Response
     end.
+
+drain(Body, Headers, #{fold := Fold, acc := Acc}) ->
+    fold(chunks(Body), Fold, Acc, 0, Headers).
+
+fold([], _Fold, Acc, Written, Headers) ->
+    {ok, #{headers => Headers, written => Written, acc => Acc}};
+fold([Chunk | Rest], Fold, Acc, Written, Headers) ->
+    case Fold(Chunk, Acc) of
+        {ok, Next} -> fold(Rest, Fold, Next, Written + byte_size(Chunk), Headers);
+        {error, Reason} -> {error, {sink_failed, Reason}}
+    end.
+
+chunks(<<>>) ->
+    [];
+chunks(Body) when byte_size(Body) =< ?CHUNK_BYTES ->
+    [Body];
+chunks(Body) ->
+    <<Chunk:?CHUNK_BYTES/binary, Rest/binary>> = Body,
+    [Chunk | chunks(Rest)].
 
 loop(#{calls := Calls, in_flight := InFlight, peak := Peak} = State) ->
     receive

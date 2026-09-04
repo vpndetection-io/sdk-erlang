@@ -1,0 +1,6 @@
+_build/
+.rebar3/
+
+# Resolved fresh on every run, so the daily one keeps testing whatever is newest
+# on hex.
+rebar.lock

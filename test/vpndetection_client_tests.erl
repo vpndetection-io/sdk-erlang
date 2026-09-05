@@ -108,7 +108,7 @@ database_responses_are_unwrapped_at_the_right_depth_test() ->
             <<"datasets">> => [#{
                 <<"base">> => <<"vpn_ip_extended">>, <<"name">> => <<"VPN IP Extended">>,
                 <<"standing">> => <<"licensed">>, <<"in_term">> => true,
-                <<"redistribution">> => <<"internal">>,
+                <<"license_type">> => <<"standard">>,
                 <<"versions">> => [#{<<"id">> => <<"vpn_ip_extended_v1">>, <<"version">> => 1,
                                      <<"formats">> => [#{<<"format">> => <<"mmdb">>,
                                                          <<"bytes">> => 42}]}]}]}},

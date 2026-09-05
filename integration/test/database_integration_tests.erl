@@ -10,7 +10,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-%% The max organization licenses cdn_ip for redistribution, and at ~10 KB it is
+%% The max organization licenses cdn_ip for license_type, and at ~10 KB it is
 %% the only dataset small enough to move in CI.
 -define(DATASET, <<"cdn_ip_v1">>).
 -define(FORMAT, csvgz).
@@ -51,8 +51,8 @@ assert_family(Family) ->
     ?assert(is_binary(maps:get(<<"name">>, Family, missing))),
     ?assert(lists:member(maps:get(<<"standing">>, Family, missing),
                          [<<"expired">>, <<"licensed">>, <<"unlicensed">>])),
-    ?assert(lists:member(maps:get(<<"redistribution">>, Family, missing),
-                         [<<"evaluation">>, <<"internal">>, <<"redistribute">>])),
+    ?assert(lists:member(maps:get(<<"license_type">>, Family, missing),
+                         [<<"evaluation">>, <<"standard">>, <<"redistribute">>])),
     Versions = maps:get(<<"versions">>, Family, []),
     ?assertNotEqual({Base, []}, {Base, Versions}),
     [begin

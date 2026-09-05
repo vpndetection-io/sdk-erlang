@@ -1,0 +1,32 @@
+name: Integration
+
+# Exercises the package as PUBLISHED on hex, against staging. CI covers this
+# working tree; nothing there would notice an app.src whose modules list forgets
+# half the library, a module a consumer cannot resolve, or a tag that never
+# landed.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+  schedule:
+    # Off the hour on purpose: scheduled runs bunched at :00 are queued behind
+    # everyone else's and can be dropped entirely under load.
+    - cron: '17 6 * * *'
+
+jobs:
+  staging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Everything runs in the official Erlang image, so this needs no toolchain
+      # of its own. The runner skips with a reason when nothing published
+      # satisfies the constraint in integration/rebar.config, and the suite skips
+      # from inside when the staging key is missing.
+      #
+      # A secret that does not exist interpolates to an empty string here, which
+      # both the runner and the suite treat as absent.
+      - run: ./scripts/run.sh
+        working-directory: integration
+        env:
+          VPNDETECTION_STAGING_KEY_FREE: ${{ secrets.INTERNETDATA_STAGING_KEY }}

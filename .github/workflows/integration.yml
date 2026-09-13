@@ -21,12 +21,18 @@ jobs:
       - uses: actions/checkout@v7
       # Everything runs in the official Erlang image, so this needs no toolchain
       # of its own. The runner skips with a reason when nothing published
-      # satisfies the constraint in integration/rebar.config, and the suite skips
-      # from inside when the staging key is missing.
+      # satisfies the constraint in integration/rebar.config, and a tier whose
+      # key is missing skips from inside the suite.
       #
-      # A secret that does not exist interpolates to an empty string here, which
-      # both the runner and the suite treat as absent.
+      # One org per plan tier, because the tier comes from the ORG rather than
+      # from the key. A secret that does not exist interpolates to an empty
+      # string here, which both the runner and the suite treat as absent - which
+      # is why this was silent: every tier read as absent and the whole suite
+      # skipped itself green.
       - run: ./scripts/run.sh
         working-directory: integration
         env:
-          VPNDETECTION_STAGING_KEY_FREE: ${{ secrets.INTERNETDATA_STAGING_KEY }}
+          VPNDETECTION_STAGING_KEY_FREE: ${{ secrets.VPNDETECTION_STAGING_KEY_FREE }}
+          VPNDETECTION_STAGING_KEY_STARTER: ${{ secrets.VPNDETECTION_STAGING_KEY_STARTER }}
+          VPNDETECTION_STAGING_KEY_SCALE: ${{ secrets.VPNDETECTION_STAGING_KEY_SCALE }}
+          VPNDETECTION_STAGING_KEY_MAX: ${{ secrets.VPNDETECTION_STAGING_KEY_MAX }}

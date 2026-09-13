@@ -14,6 +14,7 @@
 -export([new/0, new/1, close/1]).
 -export([is_bogon/1, is_bogon/2]).
 -export([lookup/2, lookup/3, lookup_batch/2, lookup_batch/3]).
+-export([my_ip/1, my_ip/2, my_account/1, my_account/2]).
 -export([database_list/1, database_metadata/2, database_checksums/3,
          database_downloads/1, database_download_url/3, database_download/4,
          database_download_bytes/3]).
@@ -122,6 +123,56 @@ lookup(Client, Ip, Options) ->
         true -> {ok, vpndetection_result:bogon(Addr)};
         false -> served(Client, Addr, Options)
     end.
+
+-spec my_ip(client()) ->
+    {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}.
+my_ip(Client) ->
+    my_ip(Client, #{}).
+
+%% @doc Classify the address this client is calling from.
+%%
+%% The same answer {@link lookup/2} would give for that address, at the same cost
+%% against your allowance. The address is the one our edge observed, so a call
+%% made through a proxy or a VPN reports the exit it left through - usually the
+%% point of asking.
+%%
+%% Deliberately NOT cached. The cache is keyed by address, and which address this
+%% is IS the question: a machine that moves between networks would otherwise be
+%% told where it used to be.
+-spec my_ip(client(), lookup_options()) ->
+    {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}.
+my_ip(Client, Options) ->
+    Retries = maps:get(retries, Options, maps:get(retries, Client)),
+    case vpndetection_http:get_json(Client, <<"/myip">>, [], Retries) of
+        {ok, Body} -> {ok, vpndetection_result:from_wire(Body)};
+        {error, Error} -> {error, Error}
+    end.
+
+-spec my_account(client()) -> {ok, map()} | {error, vpndetection_error:error()}.
+my_account(Client) ->
+    my_account(Client, #{}).
+
+%% @doc What this client's key is entitled to, and how much of it has been used.
+%%
+%% Named for what it answers rather than `me', which sits one letter from
+%% {@link my_ip/1} and means something quite different: one is which address you
+%% are calling FROM, the other is which account you are calling AS.
+%%
+%% Unlike a lookup there is no useful unauthenticated answer, so a client built
+%% without an API key gets an unauthorized error rather than a partial one.
+%%
+%% Usage counts against the ALLOWANCE WINDOW - the anniversary of the
+%% subscription, not the calendar month and not the billing period - and it is
+%% the same number a lookup is gated on. `hard_limit' is `null' when we never
+%% stop serving, which is not the same as a limit of zero.
+%%
+%% Deliberately NOT cached: the whole point is what has been spent, and a cached
+%% answer is a wrong one within seconds of the next request.
+-spec my_account(client(), lookup_options()) ->
+    {ok, map()} | {error, vpndetection_error:error()}.
+my_account(Client, Options) ->
+    Retries = maps:get(retries, Options, maps:get(retries, Client)),
+    vpndetection_http:get_json(Client, <<"/api/v1/account/me">>, [], Retries).
 
 -spec lookup_batch(client(), [binary() | string()]) ->
     #{binary() => {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}}.

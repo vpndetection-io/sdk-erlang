@@ -259,3 +259,74 @@ a_transport_failure_is_an_error_not_a_crash_test() ->
 
 routes(Addrs) ->
     maps:from_list([{Ip, #{body => #{<<"ip">> => Ip, <<"is_vpn">> => false}}} || Ip <- Addrs]).
+
+account_body() ->
+    #{<<"org_id">> => <<"85bb51e4-2eb6-4a31-8e4d-02ba8b98fe61">>,
+      <<"apikey">> => #{<<"id">> => <<"0ab424cc-7619-4dad-b027-afacdc2cedb0">>,
+                        <<"expires">> => null,
+                        <<"allowed_cidrs">> => []},
+      <<"plan">> => #{<<"key">> => <<"max">>, <<"tier">> => <<"max">>},
+      <<"usage">> => #{<<"requests">> => 580,
+                       <<"quota">> => 5000000,
+                       <<"hard_limit">> => null,
+                       <<"window_start">> => <<"2026-09-04T07:00:00Z">>,
+                       <<"window_end">> => <<"2026-10-04T07:00:00Z">>}}.
+
+my_ip_classifies_the_calling_address_test() ->
+    Stub = vpndetection_stub:start(#{<<"/myip">> =>
+        #{body => #{<<"ip">> => <<"45.83.91.1">>, <<"is_vpn">> => true}}}),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub)}),
+
+    {ok, Result} = vpndetection:my_ip(Client),
+
+    ?assertEqual(<<"45.83.91.1">>, maps:get(ip, Result)),
+    ?assertEqual(true, maps:get(is_vpn, Result)),
+    vpndetection_stub:stop(Stub).
+
+%% The cache is keyed by address, and which address this is IS the question.
+my_ip_is_not_cached_test() ->
+    Stub = vpndetection_stub:start(#{<<"/myip">> =>
+        #{body => #{<<"ip">> => <<"45.83.91.1">>, <<"is_vpn">> => true}}}),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub)}),
+
+    {ok, _} = vpndetection:my_ip(Client),
+    {ok, _} = vpndetection:my_ip(Client),
+
+    ?assertEqual(2, vpndetection_stub:calls(Stub)),
+    vpndetection_stub:stop(Stub).
+
+my_account_reports_the_plan_and_the_usage_test() ->
+    Stub = vpndetection_stub:start(#{<<"/api/v1/account/me">> => #{body => account_body()}}),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub)}),
+
+    {ok, Account} = vpndetection:my_account(Client),
+
+    ?assertEqual(<<"max">>, maps:get(<<"key">>, maps:get(<<"plan">>, Account))),
+    ?assertEqual(<<"max">>, maps:get(<<"tier">>, maps:get(<<"plan">>, Account))),
+    Usage = maps:get(<<"usage">>, Account),
+    ?assertEqual(580, maps:get(<<"requests">>, Usage)),
+    ?assertEqual(5000000, maps:get(<<"quota">>, Usage)),
+    %% null means NEVER stop, which is not the same as a limit of zero.
+    ?assertEqual(null, maps:get(<<"hard_limit">>, Usage)),
+    ?assertEqual([], maps:get(<<"allowed_cidrs">>, maps:get(<<"apikey">>, Account))),
+    vpndetection_stub:stop(Stub).
+
+%% The whole point is what has been spent.
+my_account_is_not_cached_test() ->
+    Stub = vpndetection_stub:start(#{<<"/api/v1/account/me">> => #{body => account_body()}}),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub)}),
+
+    {ok, _} = vpndetection:my_account(Client),
+    {ok, _} = vpndetection:my_account(Client),
+
+    ?assertEqual(2, vpndetection_stub:calls(Stub)),
+    vpndetection_stub:stop(Stub).
+
+%% Unlike a lookup there is no useful unauthenticated answer.
+my_account_surfaces_an_unauthorized_key_test() ->
+    Stub = vpndetection_stub:start(#{<<"/api/v1/account/me">> =>
+        #{status => 401, body => #{<<"error">> => <<"invalid API key">>}}}),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), retries => 0}),
+
+    ?assertMatch({error, #{kind := unauthorized}}, vpndetection:my_account(Client)),
+    vpndetection_stub:stop(Stub).

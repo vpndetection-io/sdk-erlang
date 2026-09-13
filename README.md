@@ -14,7 +14,7 @@ The library helps you query VPNDetection's APIs for anonymity detection includin
 {deps, [vpndetection]}.
 ```
 
-Requires Erlang/OTP 27 or newer. There are no runtime dependencies: everything the client needs is in OTP. From Elixir, add `{:vpndetection, "~> 2.0"}` to your `mix.exs` deps and call it as `:vpndetection`.
+Requires Erlang/OTP 27 or newer. There are no runtime dependencies: everything the client needs is in OTP. From Elixir, add `{:vpndetection, "~> 2.1"}` to your `mix.exs` deps and call it as `:vpndetection`.
 
 ## Usage
 
@@ -44,6 +44,30 @@ maps:get(provider, maps:get(hosting, Result)).   % <<"M247">>
 ```
 
 A detail map that is present but empty (`#{}`) means the flag above it is false. A populated one always carries every one of its keys.
+
+### Your own address
+
+```erlang
+{ok, Result} = vpndetection:my_ip(Client),
+maps:get(ip, Result).   % the address we saw this call come from
+```
+
+Same answer `lookup` would give for that address, and the same cost against your allowance. It is deliberately not cached: which address you are is the whole question, and a machine that moves between networks would otherwise be told where it used to be.
+
+### Your plan and usage
+
+```erlang
+{ok, Account} = vpndetection:my_account(Client),
+Plan = maps:get(<<"plan">>, Account),
+Usage = maps:get(<<"usage">>, Account),
+maps:get(<<"key">>, Plan).         % <<"max">>
+maps:get(<<"requests">>, Usage).   % 580
+maps:get(<<"window_end">>, Usage). % when the allowance resets
+```
+
+Usage counts against the anniversary of your subscription, not the calendar month and not the billing period, and it is the same number a lookup is gated on. `hard_limit` is `null` on an uncapped plan, which is not the same as zero.
+
+Note the key types differ: a lookup answers a map with ATOM keys, while the account answers the decoded JSON with BINARY keys. `my_ip/2` and `my_account/2` take a per-call options map.
 
 ### Batch lookup
 

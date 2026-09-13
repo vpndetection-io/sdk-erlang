@@ -159,7 +159,7 @@ lookup_batch(Client, Ips, Options) ->
 %% and would otherwise fill the atom table.
 -spec database_list(client()) -> {ok, [map()]} | {error, vpndetection_error:error()}.
 database_list(Client) ->
-    unwrap(get_json(Client, <<"/api/v1/database/list">>, []), <<"datasets">>).
+    unwrap(get_json(Client, <<"/api/v1/database/list">>, []), <<"databases">>).
 
 %% @doc What is inside one dataset: schema, samples, row count, sizes.
 -spec database_metadata(client(), binary() | string()) ->

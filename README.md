@@ -135,7 +135,7 @@ Note that `rate_limited` and `quota_exceeded` both arrive as HTTP 429 and are no
 
 ### Database downloads
 
-If your key carries the `db.download` scope, the licensed datasets are available too:
+If your key carries the `db.download` scope, the licensed databases are available too:
 
 ```erlang
 {ok, Datasets} = vpndetection:database_list(Client),

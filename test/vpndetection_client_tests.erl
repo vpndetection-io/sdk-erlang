@@ -105,7 +105,7 @@ database_responses_are_unwrapped_at_the_right_depth_test() ->
             <<"checksums">> => #{<<"md5">> => <<"m">>, <<"sha1">> => <<"s1">>,
                                  <<"sha256">> => <<"s256">>, <<"sha512">> => <<"s512">>}}},
         <<"/api/v1/database/list">> => #{body => #{
-            <<"datasets">> => [#{
+            <<"databases">> => [#{
                 <<"base">> => <<"vpn_ip_extended">>, <<"name">> => <<"VPN IP Extended">>,
                 <<"summary">> => <<"extended rows">>,
                 <<"standing">> => <<"licensed">>, <<"in_term">> => true,

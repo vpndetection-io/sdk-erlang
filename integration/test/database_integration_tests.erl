@@ -40,19 +40,24 @@ the_licensed_catalogue_answers_the_family_shape_test_() ->
         ?assertNot(lists:member(<<"docsGroup">>, Keys)),
         ?assertNot(lists:member(<<"id">>, Keys)),
 
-        Ids = lists:append([assert_family(F) || F <- Families]),
-        io:format("licensed: ~s~n", [lists:join(", ", [binary_to_list(I) || I <- Ids])]),
+        Licensed = [B || B <- [assert_family(F) || F <- Families], B =/= unlicensed],
+        %% The max org holds grants in staging, so an empty list here is the
+        %% catalogue arriving without any of them rather than a plan that buys
+        %% nothing.
+        ?assertNotEqual([], Licensed),
+        io:format("catalogue: ~b, licensed: ~s~n",
+                  [length(Families), lists:join(", ", [binary_to_list(B) || B <- Licensed])]),
         done(Client, Recorder)
     end).
 
+%% Answers the family's base when it is licensed, and `unlicensed' otherwise, so
+%% the caller can assert the org holds SOMETHING without counting rows twice.
 assert_family(Family) ->
     Base = maps:get(<<"base">>, Family, missing),
     ?assert(is_binary(Base) andalso Base =/= <<>>),
     ?assert(is_binary(maps:get(<<"name">>, Family, missing))),
-    ?assert(lists:member(maps:get(<<"standing">>, Family, missing),
-                         [<<"expired">>, <<"licensed">>, <<"unlicensed">>])),
-    ?assert(lists:member(maps:get(<<"license_type">>, Family, missing),
-                         [<<"evaluation">>, <<"standard">>, <<"redistribute">>])),
+    Standing = maps:get(<<"standing">>, Family, missing),
+    ?assert(lists:member(Standing, [<<"expired">>, <<"licensed">>, <<"unlicensed">>])),
     Versions = maps:get(<<"versions">>, Family, []),
     ?assertNotEqual({Base, []}, {Base, Versions}),
     [begin
@@ -60,7 +65,18 @@ assert_family(Family) ->
          ?assert(is_integer(maps:get(<<"version">>, V, missing))),
          ?assertNotEqual({Base, []}, {Base, maps:get(<<"formats">>, V, [])})
      end || V <- Versions],
-    [maps:get(<<"id">>, V) || V <- Versions].
+    %% `database_list/1' answers the WHOLE catalogue, so an unlicensed family is
+    %% a normal row carrying `null'. Asserting one either way is what tells a
+    %% null apart from a value this client cannot read.
+    case {Standing, maps:get(<<"license_type">>, Family, missing)} of
+        {<<"unlicensed">>, Right} ->
+            ?assertEqual({Base, null}, {Base, Right}),
+            unlicensed;
+        {_, Right} ->
+            ?assert(lists:member(Right,
+                                 [<<"evaluation">>, <<"standard">>, <<"redistribute">>])),
+            Base
+    end.
 
 %% A licence refusal names itself in `rc'. Falling back to the status means the
 %% client never read the envelope, and the caller cannot tell "never bought this"

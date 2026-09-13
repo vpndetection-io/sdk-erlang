@@ -64,29 +64,33 @@ from_wire(Body) when is_map(Body) ->
 %%
 %% This is deliberately the WIDEST shape whatever your plan is, so a caller must
 %% not infer which fields they are entitled to from a bogon answer.
+%%
+%% Built as a WIRE body and then mapped, so `raw' carries the same answer the
+%% mapped keys do. An empty `raw' here would be a different shape from every
+%% served answer, and anything reading the wire names - the middleware's block
+%% condition does - would see a plan that serves nothing.
 -spec bogon(binary()) -> result().
 bogon(Ip) ->
-    #{
-        ip => Ip,
-        is_bogon => true,
-        is_vpn => false,
-        is_hosting => false,
-        is_relay => false,
-        is_tor => false,
-        is_cdn => false,
-        is_resproxy => false,
-        is_dcproxy => false,
-        is_mobproxy => false,
-        vpn => #{},
-        hosting => #{},
-        relay => #{},
-        tor => #{},
-        cdn => #{},
-        resproxy => #{},
-        dcproxy => #{},
-        mobproxy => #{},
-        raw => #{}
-    }.
+    Wire = #{
+        <<"ip">> => Ip,
+        <<"is_vpn">> => false,
+        <<"is_hosting">> => false,
+        <<"is_relay">> => false,
+        <<"is_tor">> => false,
+        <<"is_cdn">> => false,
+        <<"is_resproxy">> => false,
+        <<"is_dcproxy">> => false,
+        <<"is_mobproxy">> => false,
+        <<"vpn">> => #{},
+        <<"hosting">> => #{},
+        <<"relay">> => #{},
+        <<"tor">> => #{},
+        <<"cdn">> => #{},
+        <<"resproxy">> => #{},
+        <<"dcproxy">> => #{},
+        <<"mobproxy">> => #{}
+    },
+    (from_wire(Wire))#{is_bogon => true}.
 
 %% Every nested object in a lookup response is one of the detail shapes, so its
 %% keys go through the same allowlist as the top level.

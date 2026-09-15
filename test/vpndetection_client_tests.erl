@@ -295,11 +295,11 @@ my_ip_is_not_cached_test() ->
     ?assertEqual(2, vpndetection_stub:calls(Stub)),
     vpndetection_stub:stop(Stub).
 
-my_account_reports_the_plan_and_the_usage_test() ->
-    Stub = vpndetection_stub:start(#{<<"/api/v1/account/me">> => #{body => account_body()}}),
+my_entitlement_reports_the_plan_and_the_usage_test() ->
+    Stub = vpndetection_stub:start(#{<<"/api/v1/entitlement/me">> => #{body => account_body()}}),
     Client = vpndetection:new(#{http => vpndetection_stub:http(Stub)}),
 
-    {ok, Account} = vpndetection:my_account(Client),
+    {ok, Account} = vpndetection:my_entitlement(Client),
 
     ?assertEqual(<<"max">>, maps:get(<<"key">>, maps:get(<<"plan">>, Account))),
     ?assertEqual(<<"max">>, maps:get(<<"tier">>, maps:get(<<"plan">>, Account))),
@@ -312,21 +312,21 @@ my_account_reports_the_plan_and_the_usage_test() ->
     vpndetection_stub:stop(Stub).
 
 %% The whole point is what has been spent.
-my_account_is_not_cached_test() ->
-    Stub = vpndetection_stub:start(#{<<"/api/v1/account/me">> => #{body => account_body()}}),
+my_entitlement_is_not_cached_test() ->
+    Stub = vpndetection_stub:start(#{<<"/api/v1/entitlement/me">> => #{body => account_body()}}),
     Client = vpndetection:new(#{http => vpndetection_stub:http(Stub)}),
 
-    {ok, _} = vpndetection:my_account(Client),
-    {ok, _} = vpndetection:my_account(Client),
+    {ok, _} = vpndetection:my_entitlement(Client),
+    {ok, _} = vpndetection:my_entitlement(Client),
 
     ?assertEqual(2, vpndetection_stub:calls(Stub)),
     vpndetection_stub:stop(Stub).
 
 %% Unlike a lookup there is no useful unauthenticated answer.
-my_account_surfaces_an_unauthorized_key_test() ->
-    Stub = vpndetection_stub:start(#{<<"/api/v1/account/me">> =>
+my_entitlement_surfaces_an_unauthorized_key_test() ->
+    Stub = vpndetection_stub:start(#{<<"/api/v1/entitlement/me">> =>
         #{status => 401, body => #{<<"error">> => <<"invalid API key">>}}}),
     Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), retries => 0}),
 
-    ?assertMatch({error, #{kind := unauthorized}}, vpndetection:my_account(Client)),
+    ?assertMatch({error, #{kind := unauthorized}}, vpndetection:my_entitlement(Client)),
     vpndetection_stub:stop(Stub).

@@ -14,7 +14,7 @@
 -export([new/0, new/1, close/1]).
 -export([is_bogon/1, is_bogon/2]).
 -export([lookup/2, lookup/3, lookup_batch/2, lookup_batch/3]).
--export([my_ip/1, my_ip/2, my_account/1, my_account/2]).
+-export([my_ip/1, my_ip/2, my_entitlement/1, my_entitlement/2]).
 -export([database_list/1, database_metadata/2, database_checksums/3,
          database_downloads/1, database_download_url/3, database_download/4,
          database_download_bytes/3]).
@@ -148,15 +148,15 @@ my_ip(Client, Options) ->
         {error, Error} -> {error, Error}
     end.
 
--spec my_account(client()) -> {ok, map()} | {error, vpndetection_error:error()}.
-my_account(Client) ->
-    my_account(Client, #{}).
+-spec my_entitlement(client()) -> {ok, map()} | {error, vpndetection_error:error()}.
+my_entitlement(Client) ->
+    my_entitlement(Client, #{}).
 
 %% @doc What this client's key is entitled to, and how much of it has been used.
 %%
 %% Named for what it answers rather than `me', which sits one letter from
 %% {@link my_ip/1} and means something quite different: one is which address you
-%% are calling FROM, the other is which account you are calling AS.
+%% are calling FROM, the other is what the key you are calling WITH may spend.
 %%
 %% Unlike a lookup there is no useful unauthenticated answer, so a client built
 %% without an API key gets an unauthorized error rather than a partial one.
@@ -168,11 +168,11 @@ my_account(Client) ->
 %%
 %% Deliberately NOT cached: the whole point is what has been spent, and a cached
 %% answer is a wrong one within seconds of the next request.
--spec my_account(client(), lookup_options()) ->
+-spec my_entitlement(client(), lookup_options()) ->
     {ok, map()} | {error, vpndetection_error:error()}.
-my_account(Client, Options) ->
+my_entitlement(Client, Options) ->
     Retries = maps:get(retries, Options, maps:get(retries, Client)),
-    vpndetection_http:get_json(Client, <<"/api/v1/account/me">>, [], Retries).
+    vpndetection_http:get_json(Client, <<"/api/v1/entitlement/me">>, [], Retries).
 
 -spec lookup_batch(client(), [binary() | string()]) ->
     #{binary() => {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}}.

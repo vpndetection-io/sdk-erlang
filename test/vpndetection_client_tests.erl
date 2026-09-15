@@ -296,7 +296,7 @@ my_ip_is_not_cached_test() ->
     vpndetection_stub:stop(Stub).
 
 my_entitlement_reports_the_plan_and_the_usage_test() ->
-    Stub = vpndetection_stub:start(#{<<"/api/v1/entitlement/me">> => #{body => account_body()}}),
+    Stub = vpndetection_stub:start(#{<<"/api/v1/entitlement">> => #{body => account_body()}}),
     Client = vpndetection:new(#{http => vpndetection_stub:http(Stub)}),
 
     {ok, Account} = vpndetection:my_entitlement(Client),
@@ -313,7 +313,7 @@ my_entitlement_reports_the_plan_and_the_usage_test() ->
 
 %% The whole point is what has been spent.
 my_entitlement_is_not_cached_test() ->
-    Stub = vpndetection_stub:start(#{<<"/api/v1/entitlement/me">> => #{body => account_body()}}),
+    Stub = vpndetection_stub:start(#{<<"/api/v1/entitlement">> => #{body => account_body()}}),
     Client = vpndetection:new(#{http => vpndetection_stub:http(Stub)}),
 
     {ok, _} = vpndetection:my_entitlement(Client),
@@ -324,7 +324,7 @@ my_entitlement_is_not_cached_test() ->
 
 %% Unlike a lookup there is no useful unauthenticated answer.
 my_entitlement_surfaces_an_unauthorized_key_test() ->
-    Stub = vpndetection_stub:start(#{<<"/api/v1/entitlement/me">> =>
+    Stub = vpndetection_stub:start(#{<<"/api/v1/entitlement">> =>
         #{status => 401, body => #{<<"error">> => <<"invalid API key">>}}}),
     Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), retries => 0}),
 

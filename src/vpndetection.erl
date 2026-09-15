@@ -172,7 +172,7 @@ my_entitlement(Client) ->
     {ok, map()} | {error, vpndetection_error:error()}.
 my_entitlement(Client, Options) ->
     Retries = maps:get(retries, Options, maps:get(retries, Client)),
-    vpndetection_http:get_json(Client, <<"/api/v1/entitlement/me">>, [], Retries).
+    vpndetection_http:get_json(Client, <<"/api/v1/entitlement">>, [], Retries).
 
 -spec lookup_batch(client(), [binary() | string()]) ->
     #{binary() => {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}}.

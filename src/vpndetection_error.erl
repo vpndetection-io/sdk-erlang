@@ -1,7 +1,7 @@
 %% @doc Why a request failed, and whether trying it again could ever help.
 -module(vpndetection_error).
 
--export([from_response/3, from_transport/1]).
+-export([from_response/3, from_entry/2, from_transport/1]).
 
 -export_type([kind/0, error/0]).
 
@@ -35,6 +35,14 @@
 from_response(Status, Headers, Body) ->
     Message = message_of(Body, Status),
     classify(Status, retry_after(Headers), Message).
+
+%% @doc A per-entry failure inside a successful batch: the status the single
+%% lookup would have answered, and its message, with no headers at all - so a
+%% 429 here is a spent allowance, which is the only kind the API puts in an
+%% entry.
+-spec from_entry(100..599, binary()) -> error().
+from_entry(Status, Message) when is_integer(Status), is_binary(Message) ->
+    classify(Status, undefined, Message).
 
 %% @doc Classify a failure that never produced a response at all.
 -spec from_transport(term()) -> error().

@@ -4,7 +4,10 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--define(ADDRS, [<<"9.9.9.", (integer_to_binary(N))/binary>> || N <- lists:seq(1, 12)]).
+%% Enough addresses for seven chunks of the batch endpoint's 1000, so a
+%% concurrency bound has something to bound: one request per chunk, and only
+%% the chunks overlap.
+-define(ADDRS, [addr(N) || N <- lists:seq(0, 6000)]).
 
 is_bogon_is_on_the_client_and_agrees_with_the_standalone_export_test() ->
     Client = vpndetection:new(#{cache => false, http => fun(_) -> {error, unused} end}),
@@ -21,7 +24,7 @@ batch_concurrency_is_configurable_per_call_test() ->
 
     _ = vpndetection:lookup_batch(Client, ?ADDRS, #{concurrency => 3}),
 
-    ?assertEqual(length(?ADDRS), vpndetection_stub:calls(Stub)),
+    ?assertEqual(7, vpndetection_stub:calls(Stub)),
     ?assert(vpndetection_stub:peak(Stub) =< 3),
     ?assert(vpndetection_stub:peak(Stub) > 1),
     vpndetection_stub:stop(Stub).
@@ -54,7 +57,9 @@ without_an_override_the_client_concurrency_still_applies_test() ->
 the_real_transport_honors_the_concurrency_bound_test_() ->
     {timeout, 60, fun() ->
         Origin = vpndetection_origin:start(#{delay_ms => 150}),
-        Addrs = [<<"9.9.9.", (integer_to_binary(N))/binary>> || N <- lists:seq(1, 24)],
+        %% Seventeen chunks of the batch endpoint's 1000, so sixteen workers each
+        %% hold a request at once.
+        Addrs = [addr(N) || N <- lists:seq(0, 16000)],
         Client = vpndetection:new(#{base_url => vpndetection_origin:base_url(Origin),
                                     cache => false}),
 
@@ -256,6 +261,9 @@ a_transport_failure_is_an_error_not_a_crash_test() ->
                                 retries => 0, timeout_ms => 2000}),
     ?assertMatch({error, #{kind := network, retryable := true}},
                  vpndetection:lookup(Client, <<"1.1.1.1">>)).
+
+addr(N) ->
+    list_to_binary(io_lib:format("9.~b.~b.~b", [1 + N div 65536, (N div 256) rem 256, N rem 256])).
 
 routes(Addrs) ->
     maps:from_list([{Ip, #{body => #{<<"ip">> => Ip, <<"is_vpn">> => false}}} || Ip <- Addrs]).

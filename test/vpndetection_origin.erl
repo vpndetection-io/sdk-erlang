@@ -85,10 +85,13 @@ accept_loop(Listen, Counter, Options) ->
 
 serve(Socket, Counter, Options) ->
     case read_request(Socket) of
-        {ok, Path, Query, Credentialed} ->
+        {ok, Path, Query, Credentialed, Body} ->
             Counter ! {started, Path, Credentialed},
             timer:sleep(maps:get(delay_ms, Options, 0)),
-            respond(Socket, Path, Query, Options),
+            case Path of
+                <<"/batch">> -> respond_batch(Socket, Body);
+                _ -> respond(Socket, Path, Query, Options)
+            end,
             Counter ! finished,
             gen_tcp:close(Socket);
         error ->
@@ -99,7 +102,9 @@ read_request(Socket) ->
     case gen_tcp:recv(Socket, 0, 5000) of
         {ok, {http_request, _Method, {abs_path, Target}, _Version}} ->
             [Path | Rest] = binary:split(Target, <<"?">>),
-            {ok, Path, iolist_to_binary(Rest), headers(Socket, false)};
+            Seen = headers(Socket, #{credentialed => false, length => 0}),
+            #{credentialed := Credentialed, length := Length} = Seen,
+            {ok, Path, iolist_to_binary(Rest), Credentialed, body(Socket, Length)};
         {ok, _Other} ->
             read_request(Socket);
         {error, _} ->
@@ -107,14 +112,38 @@ read_request(Socket) ->
     end.
 
 %% Answers whether a credential was presented, which is the whole question at the
-%% object storage end of a download.
-headers(Socket, Credentialed) ->
+%% object storage end of a download, and how long the body is, which a POST
+%% carries after the blank line.
+headers(Socket, Seen) ->
     case gen_tcp:recv(Socket, 0, 5000) of
-        {ok, http_eoh} -> Credentialed;
-        {ok, {http_header, _, 'Authorization', _, _}} -> headers(Socket, true);
-        {ok, _} -> headers(Socket, Credentialed);
-        {error, _} -> Credentialed
+        {ok, http_eoh} -> Seen;
+        {ok, {http_header, _, 'Authorization', _, _}} -> headers(Socket, Seen#{credentialed := true});
+        {ok, {http_header, _, 'Content-Length', _, Value}} ->
+            headers(Socket, Seen#{length := binary_to_integer(Value)});
+        {ok, _} -> headers(Socket, Seen);
+        {error, _} -> Seen
     end.
+
+body(_Socket, 0) ->
+    <<>>;
+body(Socket, Length) ->
+    ok = inet:setopts(Socket, [{packet, raw}]),
+    case gen_tcp:recv(Socket, Length, 5000) of
+        {ok, Body} -> Body;
+        {error, _} -> <<>>
+    end.
+
+%% A batch is answered from the addresses in its body, every one not a VPN.
+respond_batch(Socket, Body) ->
+    Ips = try json:decode(Body) of
+        #{<<"ips">> := List} when is_list(List) -> List;
+        _ -> []
+    catch
+        _:_ -> []
+    end,
+    Results = maps:from_list([{Ip, #{<<"ip">> => Ip, <<"is_vpn">> => false}} || Ip <- Ips]),
+    Answer = iolist_to_binary(json:encode(#{<<"results">> => Results, <<"errors">> => #{}})),
+    send(Socket, 200, [{<<"content-type">>, <<"application/json">>}], Answer).
 
 %% Announces gigabytes and then stalls. A client that followed the redirect would
 %% sit here until its own timeout, which is exactly the failure this exists to

@@ -114,8 +114,11 @@ one_bad_address_does_not_lose_the_rest_of_the_batch_test() ->
     Got = vpndetection:lookup_batch(Client, batch_input(<<"partial-failure-does-not-fail-the-batch">>)),
 
     ?assertEqual(lists:sort(maps:get(<<"keys">>, Expect)), lists:sort(maps:keys(Got))),
-    [?assertMatch({error, #{kind := bad_request}}, maps:get(K, Got))
-     || K <- maps:get(<<"errorKeys">>, Expect)],
+    Kinds = maps:get(<<"errorKinds">>, Expect),
+    [begin
+         {error, #{kind := Kind}} = maps:get(K, Got),
+         ?assertEqual(binary_to_atom(maps:get(K, Kinds)), Kind)
+     end || K <- maps:get(<<"errorKeys">>, Expect)],
     ?assertMatch({ok, #{is_vpn := false}}, maps:get(<<"1.1.1.1">>, Got)),
     vpndetection:close(Client),
     vpndetection_stub:stop(Stub).
@@ -132,6 +135,45 @@ cache_hit_issues_no_second_request_test() ->
     [vpndetection:lookup_batch(Client, Input)
      || _ <- lists:seq(1, maps:get(<<"repeat">>, Case))],
 
+    ?assertEqual(maps:get(<<"httpRequests">>, Expect), vpndetection_stub:calls(Stub)),
+    vpndetection:close(Client),
+    vpndetection_stub:stop(Stub).
+
+a_large_batch_is_sent_in_chunks_of_a_thousand_test() ->
+    Name = <<"chunks-of-one-thousand">>,
+    Input = batch_input(Name),
+    Expect = batch_expect(Name),
+    Stub = vpndetection_stub:start(maps:from_list(
+        [{Ip, #{body => #{<<"ip">> => Ip, <<"is_vpn">> => false}}} || Ip <- Input])),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), cache => false}),
+    Got = vpndetection:lookup_batch(Client, Input),
+
+    ?assertEqual(maps:get(<<"keyCount">>, Expect), map_size(Got)),
+    ?assertEqual(maps:get(<<"httpRequests">>, Expect), vpndetection_stub:calls(Stub)),
+    [?assertMatch({ok, #{ip := Ip}}, maps:get(Ip, Got)) || Ip <- Input],
+    vpndetection:close(Client),
+    vpndetection_stub:stop(Stub).
+
+%% A per-entry failure carries no headers, so its 429 can only be a spent
+%% allowance, and a 500 is the server's; neither is retried per entry, because
+%% retries belong to the call and the call succeeded.
+an_entry_error_is_classified_by_its_status_test() ->
+    Name = <<"an-entry-error-is-classified-by-its-status">>,
+    Expect = batch_expect(Name),
+    Stub = vpndetection_stub:start(#{
+        <<"1.1.1.1">> => #{body => #{<<"ip">> => <<"1.1.1.1">>, <<"is_vpn">> => false}},
+        <<"8.8.8.8">> => #{status => 429,
+                           body => #{<<"error">> => <<"request allowance exceeded; raise or remove your overage limit">>}},
+        <<"9.9.9.9">> => #{status => 500, body => #{<<"error">> => <<"lookup failed">>}}
+    }),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), retries => 3}),
+    Got = vpndetection:lookup_batch(Client, batch_input(Name)),
+
+    ?assertEqual(lists:sort(maps:get(<<"keys">>, Expect)), lists:sort(maps:keys(Got))),
+    [begin
+         {error, #{kind := Kind}} = maps:get(K, Got),
+         ?assertEqual(binary_to_atom(V), Kind)
+     end || {K, V} <- maps:to_list(maps:get(<<"errorKinds">>, Expect))],
     ?assertEqual(maps:get(<<"httpRequests">>, Expect), vpndetection_stub:calls(Stub)),
     vpndetection:close(Client),
     vpndetection_stub:stop(Stub).

@@ -28,6 +28,9 @@
 -define(DEFAULT_CACHE_TTL_MS, 3600000).
 -define(DEFAULT_TIMEOUT_MS, 30000).
 -define(BATCH_TAG, '$vpndetection_batch').
+%% The most addresses POST /batch takes in one call; a larger batch is sent in
+%% chunks of this size.
+-define(BATCH_MAX, 1000).
 
 -opaque client() :: #{
     base_url := binary(),
@@ -179,14 +182,18 @@ my_entitlement(Client, Options) ->
 lookup_batch(Client, Ips) ->
     lookup_batch(Client, Ips, #{}).
 
-%% @doc Classify many addresses at once, one process per address up to the
-%% concurrency bound.
+%% @doc Classify many addresses in as few requests as possible.
 %%
-%% Keyed by address rather than positional, so duplicates in the input collapse
-%% to a single request and the caller never has to line two lists up. An address
-%% that fails carries its `{error, Error}' as its value, so one bad entry cannot
-%% lose the rest of the answers. Erlang maps have no insertion order, so the
-%% result is a set of keys rather than a sequence.
+%% Bogons are answered locally and cached answers are reused; everything else
+%% goes to the batch endpoint in chunks of up to 1000 addresses, with at most
+%% `concurrency' chunks in flight. Keyed by address rather than positional, so
+%% duplicates in the input collapse to a single entry and the caller never has
+%% to line two lists up. An address that fails carries its `{error, Error}' as
+%% its value, so one bad entry cannot lose the rest of the answers: the API
+%% reports a per-entry failure with the status the single lookup would have
+%% answered, and a chunk that fails as a whole marks every address in it.
+%% Erlang maps have no insertion order, so the result is a set of keys rather
+%% than a sequence.
 %%
 %% `concurrency' and `retries' are overridable here, per call, so one large batch
 %% does not need a second client built to widen it.
@@ -195,7 +202,19 @@ lookup_batch(Client, Ips) ->
 lookup_batch(Client, Ips, Options) ->
     Unique = lists:uniq([bin(Ip) || Ip <- Ips]),
     Concurrency = maps:get(concurrency, Options, maps:get(concurrency, Client)),
-    dispatch(fun(Ip) -> lookup(Client, Ip, Options) end, Unique, Concurrency, #{}, #{}, #{}).
+    {Answered, Pending} = lists:foldl(fun(Ip, {Acc, Rest}) ->
+        case local(Client, Ip) of
+            {ok, Result} -> {Acc#{Ip => {ok, Result}}, Rest};
+            miss -> {Acc, [Ip | Rest]}
+        end
+    end, {#{}, []}, Unique),
+    Chunks = chunk(lists:reverse(Pending), ?BATCH_MAX),
+    ByChunk = dispatch(fun(Chunk) -> lookup_chunk(Client, Chunk, Options) end,
+                       Chunks, Concurrency, #{}, #{}, #{}),
+    maps:fold(fun
+        (_Chunk, Answers, Acc) when is_map(Answers) -> maps:merge(Acc, Answers);
+        (Chunk, Error, Acc) -> maps:merge(Acc, maps:from_list([{Ip, Error} || Ip <- Chunk]))
+    end, Answered, ByChunk).
 
 %% @doc The dataset FAMILIES your organization is licensed to download.
 %%
@@ -383,6 +402,55 @@ dispatch(Fun, Queue, Limit, Pending, Done, Acc) ->
 worker_died(Reason) ->
     #{kind => network, retryable => false,
       message => iolist_to_binary(io_lib:format("lookup worker exited: ~p", [Reason]))}.
+
+%% A bogon or a cached answer costs no request; `miss' is what goes to the API.
+local(Client, Ip) ->
+    case vpndetection_bogon:is_bogon(Ip) of
+        true -> {ok, vpndetection_result:bogon(Ip)};
+        false -> cached(Client, Ip)
+    end.
+
+chunk([], _Size) ->
+    [];
+chunk(List, Size) when length(List) =< Size ->
+    [List];
+chunk(List, Size) ->
+    {Head, Tail} = lists:split(Size, List),
+    [Head | chunk(Tail, Size)].
+
+%% One POST /batch, mapped back onto the addresses it was asked about. A
+%% chunk-level failure - the call refused, the transport failing, the retries
+%% exhausted - becomes every address's error, exactly as it would have been had
+%% each been looked up alone.
+lookup_chunk(Client, Chunk, Options) ->
+    Retries = maps:get(retries, Options, maps:get(retries, Client)),
+    Body = iolist_to_binary(json:encode(#{<<"ips">> => Chunk})),
+    case vpndetection_http:post_json(Client, <<"/batch">>, Body, Retries) of
+        {ok, Answer} ->
+            Results = object(maps:get(<<"results">>, Answer, #{})),
+            Errors = object(maps:get(<<"errors">>, Answer, #{})),
+            maps:from_list([{Ip, batch_answer(Client, Ip, Results, Errors)} || Ip <- Chunk]);
+        {error, Error} ->
+            maps:from_list([{Ip, {error, Error}} || Ip <- Chunk])
+    end.
+
+object(Value) when is_map(Value) -> Value;
+object(_) -> #{}.
+
+%% Every address lands in exactly one of `results' and `errors'; an address in
+%% neither is the server breaking its own contract, and is reported as such
+%% rather than lost.
+batch_answer(Client, Ip, Results, Errors) ->
+    case {Results, Errors} of
+        {#{Ip := Served}, _} when is_map(Served) ->
+            store(Client, Ip, vpndetection_result:from_wire(Served));
+        {_, #{Ip := #{<<"status">> := Status, <<"error">> := Message}}}
+          when is_integer(Status), is_binary(Message) ->
+            {error, vpndetection_error:from_entry(Status, Message)};
+        _ ->
+            {error, #{kind => server_error, retryable => false, status => 200,
+                      message => <<"the batch answer did not include ", Ip/binary>>}}
+    end.
 
 get_json(Client, Path, Query) ->
     vpndetection_http:get_json(Client, Path, Query, maps:get(retries, Client)).

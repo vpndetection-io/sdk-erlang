@@ -39,7 +39,7 @@ peak(Pid) ->
 %% anything else arrives whole because httpc streams only a success.
 request(Pid, #{url := Url} = Request) ->
     Ref = make_ref(),
-    Pid ! {request, self(), Ref, Url},
+    Pid ! {request, self(), Ref, Url, maps:get(body, Request, <<>>)},
     Response = receive
         {Ref, R} -> R
     after 15000 ->
@@ -73,9 +73,9 @@ chunks(Body) ->
 
 loop(#{calls := Calls, in_flight := InFlight, peak := Peak} = State) ->
     receive
-        {request, From, Ref, Url} ->
+        {request, From, Ref, Url, Body} ->
             Self = self(),
-            Response = respond(maps:get(routes, State), Url),
+            Response = respond(maps:get(routes, State), Url, Body),
             Delay = maps:get(delay, State),
             spawn(fun() ->
                 timer:sleep(Delay),
@@ -93,12 +93,11 @@ loop(#{calls := Calls, in_flight := InFlight, peak := Peak} = State) ->
             From ! {Ref, ok}
     end.
 
-respond(Routes, Url) ->
+respond(Routes, Url, Body) ->
     Path = path_of(Url),
-    Route = case {maps:find(Path, Routes), maps:find(strip(Path), Routes)} of
-        {{ok, R}, _} -> R;
-        {_, {ok, R}} -> R;
-        _ -> #{status => 400, body => #{<<"error">> => <<"not a valid IP address">>}}
+    Route = case Path of
+        <<"/batch">> -> batch_route(Routes, Body);
+        _ -> route_for(Routes, Path)
     end,
     Headers = maps:get(headers, Route, #{}),
     {ok, #{
@@ -110,6 +109,35 @@ respond(Routes, Url) ->
                     | [{lower(K), V} || {K, V} <- maps:to_list(Headers)]],
         body => iolist_to_binary(json:encode(maps:get(body, Route, #{})))
     }}.
+
+route_for(Routes, Path) ->
+    case {maps:find(Path, Routes), maps:find(strip(Path), Routes)} of
+        {{ok, R}, _} -> R;
+        {_, {ok, R}} -> R;
+        _ -> #{status => 400, body => #{<<"error">> => <<"not a valid IP address">>}}
+    end.
+
+%% A POST /batch is answered the way the API answers one: every address the
+%% table knows is a result if its route is a 200 and an entry error otherwise,
+%% and an unknown address is the 400 the API gives a string that is not one. One
+%% call however many addresses, which is what the request counts measure.
+batch_route(Routes, Body) ->
+    Ips = try json:decode(Body) of
+        #{<<"ips">> := List} when is_list(List) -> List;
+        _ -> []
+    catch
+        _:_ -> []
+    end,
+    {Results, Errors} = lists:foldl(fun(Ip, {R, E}) ->
+        Route = route_for(Routes, <<"/", Ip/binary>>),
+        RouteBody = maps:get(body, Route, #{}),
+        case maps:get(status, Route, 200) of
+            200 -> {R#{Ip => RouteBody}, E};
+            Status -> {R, E#{Ip => #{<<"status">> => Status,
+                                     <<"error">> => maps:get(<<"error">>, RouteBody, <<>>)}}}
+        end
+    end, {#{}, #{}}, Ips),
+    #{status => 200, body => #{<<"results">> => Results, <<"errors">> => Errors}}.
 
 path_of(Url) ->
     #{path := Path} = uri_string:parse(Url),

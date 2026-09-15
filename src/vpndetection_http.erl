@@ -6,15 +6,16 @@
 %% chunk at a time.
 -module(vpndetection_http).
 
--export([ensure_ready/0, httpc_fun/0, get_json/4, get_redirect/4, get_stream/4, escape/1]).
+-export([ensure_ready/0, httpc_fun/0, get_json/4, post_json/4, get_redirect/4, get_stream/4, escape/1]).
 
 -export_type([request/0, response/0, result/0, sink/0, fold/0, http_fun/0]).
 
 -type request() :: #{
-    method := get,
+    method := get | post,
     url := binary(),
     headers := [{binary(), binary()}],
     timeout_ms := pos_integer(),
+    body => binary(),
     sink => sink()
 }.
 
@@ -73,19 +74,27 @@ httpc_fun() ->
 -spec get_json(map(), binary(), [{binary(), binary()}], non_neg_integer()) ->
     {ok, map()} | {error, vpndetection_error:error()}.
 get_json(Client, Path, Query, Retries) ->
-    with_retry(Client, api_request(Client, Path, Query), Retries, fun
-        (#{status := 200, body := Body}) ->
-            try json:decode(Body) of
-                Decoded when is_map(Decoded) -> {ok, Decoded};
-                _ -> {error, #{kind => server_error, message => <<"response body was not an object">>,
-                               retryable => false}}
-            catch
-                _:_ -> {error, #{kind => server_error, message => <<"response body was not JSON">>,
-                                 retryable => false}}
-            end;
-        (Result) ->
-            {error, failure(Result)}
-    end).
+    with_retry(Client, api_request(Client, Path, Query), Retries, fun json_object/1).
+
+%% @doc POST a JSON body and decode the JSON object it answers with. The one
+%% request with a body: the batch.
+-spec post_json(map(), binary(), binary(), non_neg_integer()) ->
+    {ok, map()} | {error, vpndetection_error:error()}.
+post_json(Client, Path, Body, Retries) ->
+    Request = (api_request(Client, Path, []))#{method := post, body => Body},
+    with_retry(Client, Request, Retries, fun json_object/1).
+
+json_object(#{status := 200, body := Body}) ->
+    try json:decode(Body) of
+        Decoded when is_map(Decoded) -> {ok, Decoded};
+        _ -> {error, #{kind => server_error, message => <<"response body was not an object">>,
+                       retryable => false}}
+    catch
+        _:_ -> {error, #{kind => server_error, message => <<"response body was not JSON">>,
+                         retryable => false}}
+    end;
+json_object(Result) ->
+    {error, failure(Result)}.
 
 %% @doc Fetch the `Location' of a redirect without following it.
 -spec get_redirect(map(), binary(), [{binary(), binary()}], non_neg_integer()) ->
@@ -129,13 +138,17 @@ send(#{sink := Sink} = Request) ->
 send(Request) ->
     whole(Request).
 
-whole(#{url := Url, headers := Headers, timeout_ms := TimeoutMs}) ->
+whole(#{method := Method, url := Url, headers := Headers, timeout_ms := TimeoutMs} = Request) ->
     %% autoredirect MUST stay false. The download endpoint answers 302 to
     %% object storage, and following it would pull a dataset that routinely
     %% runs to gigabytes into memory as one binary.
     HttpOpts = [{timeout, TimeoutMs}, {connect_timeout, TimeoutMs}, {autoredirect, false}],
-    case httpc:request(get, httpc_request(Url, Headers), HttpOpts,
-                       [{body_format, binary}], ?PROFILE) of
+    {UrlString, HeaderList} = httpc_request(Url, Headers),
+    HttpcRequest = case Method of
+        get -> {UrlString, HeaderList};
+        post -> {UrlString, HeaderList, "application/json", maps:get(body, Request, <<>>)}
+    end,
+    case httpc:request(Method, HttpcRequest, HttpOpts, [{body_format, binary}], ?PROFILE) of
         {ok, {{_Version, Status, _Phrase}, RespHeaders, Body}} ->
             {ok, #{status => Status, headers => normalize(RespHeaders), body => Body}};
         {error, Reason} ->

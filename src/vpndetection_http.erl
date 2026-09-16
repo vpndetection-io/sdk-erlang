@@ -196,8 +196,8 @@ whole(#{method := Method, url := Url, headers := Headers, timeout_ms := TimeoutM
     %% object storage, and following it would pull a dataset that routinely
     %% runs to gigabytes into memory as one binary.
     HttpOpts = [{timeout, TimeoutMs}, {connect_timeout, TimeoutMs}, {autoredirect, false}],
-    %% httpc takes a body's type apart from the headers, and would send a second
-    %% content-type if it stayed among them.
+    %% httpc sends its body-type argument as the content-type and silently drops
+    %% one given among the headers, so a form's type has to be moved there.
     {ContentType, Sent} = case lists:keytake(<<"content-type">>, 1, Headers) of
         {value, {_, Type}, Others} -> {binary_to_list(Type), Others};
         false -> {"application/json", Headers}

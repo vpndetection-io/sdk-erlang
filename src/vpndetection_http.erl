@@ -7,6 +7,7 @@
 -module(vpndetection_http).
 
 -export([ensure_ready/0, httpc_fun/0, get_json/4, post_json/4, get_redirect/4, get_stream/4, escape/1]).
+-export([oauth_request/3, oauth/4]).
 
 -export_type([request/0, response/0, result/0, sink/0, fold/0, http_fun/0]).
 
@@ -96,6 +97,58 @@ json_object(#{status := 200, body := Body}) ->
 json_object(Result) ->
     {error, failure(Result)}.
 
+%% @doc A request to the authorization server, carrying NO credential whatever
+%% the client holds: these endpoints have no use for the API key, and on the
+%% token endpoint an `authorization' header reads as client authentication. A form
+%% is POSTed, its type riding as the content-type header `whole/1' hands to httpc.
+-spec oauth_request(map(), binary(), [{binary(), binary()}] | undefined) -> request().
+oauth_request(#{base_url := BaseUrl, timeout_ms := TimeoutMs, user_agent := Agent}, Path, Form) ->
+    Headers = [{<<"accept">>, <<"application/json">>}, {<<"user-agent">>, Agent}],
+    Request = #{method => get, url => <<(trim_slash(BaseUrl))/binary, Path/binary>>,
+                headers => Headers, timeout_ms => TimeoutMs},
+    case Form of
+        undefined ->
+            Request;
+        _ ->
+            FormType = {<<"content-type">>, <<"application/x-www-form-urlencoded">>},
+            Request#{method := post, headers := Headers ++ [FormType], body => form(Form)}
+    end.
+
+%% @doc Send one OAuth request, attempted again up to `Retries' times. A 2xx goes
+%% to `Decode' with its status; a 4xx naming an RFC 6749 `error' is that refusal,
+%% which is never retryable; anything else is the ordinary error for its status.
+-spec oauth(map(), request(), non_neg_integer(),
+            fun((100..599, binary()) -> {ok, term()} | {error, vpndetection_error:error()})) ->
+    {ok, term()} | {error, vpndetection_error:error()}.
+oauth(Client, Request, Retries, Decode) ->
+    with_retry(Client, Request, Retries, fun
+        (#{status := Status, body := Body}) when Status >= 200, Status < 300 ->
+            Decode(Status, Body);
+        (#{status := Status, headers := Headers, body := Body} = Result) when Status >= 400, Status < 500 ->
+            case refusal(Body) of
+                {Code, Description} ->
+                    {error, vpndetection_error:from_oauth(Status, Headers, Code, Description)};
+                none -> {error, failure(Result)}
+            end;
+        (Result) ->
+            {error, failure(Result)}
+    end).
+
+%% Only a JSON object whose `error' is a STRING is the authorization server's own
+%% refusal. A gateway's page, or a 400 in some other shape, names no OAuth code.
+refusal(Body) ->
+    try json:decode(Body) of
+        #{<<"error">> := Code} = Decoded when is_binary(Code) ->
+            case maps:get(<<"error_description">>, Decoded, undefined) of
+                Description when is_binary(Description) -> {Code, Description};
+                _ -> {Code, undefined}
+            end;
+        _ ->
+            none
+    catch
+        _:_ -> none
+    end.
+
 %% @doc Fetch the `Location' of a redirect without following it.
 -spec get_redirect(map(), binary(), [{binary(), binary()}], non_neg_integer()) ->
     {ok, binary()} | {error, vpndetection_error:error()}.
@@ -143,10 +196,16 @@ whole(#{method := Method, url := Url, headers := Headers, timeout_ms := TimeoutM
     %% object storage, and following it would pull a dataset that routinely
     %% runs to gigabytes into memory as one binary.
     HttpOpts = [{timeout, TimeoutMs}, {connect_timeout, TimeoutMs}, {autoredirect, false}],
-    {UrlString, HeaderList} = httpc_request(Url, Headers),
+    %% httpc takes a body's type apart from the headers, and would send a second
+    %% content-type if it stayed among them.
+    {ContentType, Sent} = case lists:keytake(<<"content-type">>, 1, Headers) of
+        {value, {_, Type}, Others} -> {binary_to_list(Type), Others};
+        false -> {"application/json", Headers}
+    end,
+    {UrlString, HeaderList} = httpc_request(Url, Sent),
     HttpcRequest = case Method of
         get -> {UrlString, HeaderList};
-        post -> {UrlString, HeaderList, "application/json", maps:get(body, Request, <<>>)}
+        post -> {UrlString, HeaderList, ContentType, maps:get(body, Request, <<>>)}
     end,
     case httpc:request(Method, HttpcRequest, HttpOpts, [{body_format, binary}], ?PROFILE) of
         {ok, {{_Version, Status, _Phrase}, RespHeaders, Body}} ->
@@ -286,8 +345,19 @@ headers(#{api_key := Key, user_agent := Agent}) ->
 query_string([]) ->
     <<>>;
 query_string(Query) ->
-    Encoded = [<<(escape(K))/binary, "=", (escape(V))/binary>> || {K, V} <- Query],
-    <<"?", (iolist_to_binary(lists:join(<<"&">>, Encoded)))/binary>>.
+    <<"?", (form(Query))/binary>>.
+
+%% Every byte outside the unreserved set is escaped, so a `+' leaves as `%2B' and
+%% cannot arrive as a space.
+form(Pairs) ->
+    Encoded = [<<(escape(K))/binary, "=", (escape(V))/binary>> || {K, V} <- Pairs],
+    iolist_to_binary(lists:join(<<"&">>, Encoded)).
+
+trim_slash(Url) ->
+    case binary:last(Url) of
+        $/ -> binary:part(Url, 0, byte_size(Url) - 1);
+        _ -> Url
+    end.
 
 %% Percent-encodes everything outside the unreserved set. IPv6 colons are escaped
 %% along with the rest, which the API accepts, so one encoder covers both

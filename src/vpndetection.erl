@@ -18,8 +18,14 @@
 -export([database_list/1, database_metadata/2, database_checksums/3,
          database_downloads/1, database_download_url/3, database_download/4,
          database_download_bytes/3]).
+-export([database_formats/0, standings/0, license_types/0]).
+-export([oauth_metadata/1, oauth_metadata/2, oauth_device_authorization/2,
+         oauth_device_authorization/3, oauth_exchange_device_code/3, oauth_exchange_device_code/4,
+         oauth_exchange_refresh_token/3, oauth_exchange_refresh_token/4, oauth_revoke/3, oauth_revoke/4,
+         oauth_poll_device_token/3, oauth_poll_device_token/4]).
 
 -export_type([client/0, options/0, lookup_options/0, batch_options/0, format/0]).
+-export_type([oauth_options/0, device_authorization_options/0]).
 
 -define(DEFAULT_BASE_URL, <<"https://api.vpndetection.io">>).
 -define(DEFAULT_CONCURRENCY, 8).
@@ -59,6 +65,11 @@
 -type format() :: csvgz | mmdb.
 %% The same set at runtime, because `format()' checks nothing once compiled.
 -define(FORMATS, [csvgz, mmdb]).
+
+-type oauth_options() :: #{timeout_ms => pos_integer()}.
+-type device_authorization_options() :: #{scope => binary() | string(),
+                                          resource => binary() | string(),
+                                          timeout_ms => pos_integer()}.
 
 -spec new() -> client().
 new() ->
@@ -209,20 +220,32 @@ lookup_batch(Client, Ips) ->
     #{binary() => {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}}.
 lookup_batch(Client, Ips, Options) ->
     Unique = lists:uniq([bin(Ip) || Ip <- Ips]),
-    Concurrency = maps:get(concurrency, Options, maps:get(concurrency, Client)),
-    {Answered, Pending} = lists:foldl(fun(Ip, {Acc, Rest}) ->
-        case local(Client, Ip) of
-            {ok, Result} -> {Acc#{Ip => {ok, Result}}, Rest};
-            miss -> {Acc, [Ip | Rest]}
-        end
-    end, {#{}, []}, Unique),
-    Chunks = chunk(lists:reverse(Pending), ?BATCH_MAX),
-    ByChunk = dispatch(fun(Chunk) -> lookup_chunk(Client, Chunk, Options) end,
-                       Chunks, Concurrency, #{}, #{}, #{}),
-    maps:fold(fun
-        (_Chunk, Answers, Acc) when is_map(Answers) -> maps:merge(Acc, Answers);
-        (Chunk, Error, Acc) -> maps:merge(Acc, maps:from_list([{Ip, Error} || Ip <- Chunk]))
-    end, Answered, ByChunk).
+    case maps:get(concurrency, Options, maps:get(concurrency, Client)) of
+        Concurrency when is_integer(Concurrency), Concurrency >= 1 ->
+            batch(Client, Unique, Options, Concurrency);
+        %% A dispatcher that may run nothing waits for ever, so this is the
+        %% caller's mistake to hear about at once.
+        Refused ->
+            Message = iolist_to_binary(io_lib:format("concurrency must be at least 1, not ~p", [Refused])),
+            Error = #{kind => bad_request, retryable => false, message => Message},
+            maps:from_list([{Ip, {error, Error}} || Ip <- Unique])
+    end.
+
+%% @doc Every format a dataset file is published in: the values `format()' takes,
+%% for checking one that came from a flag or a config file.
+-spec database_formats() -> [format()].
+database_formats() ->
+    ?FORMATS.
+
+%% @doc Every value a family's `&lt;&lt;"standing"&gt;&gt;' takes in {@link database_list/1}.
+-spec standings() -> [binary()].
+standings() ->
+    [<<"expired">>, <<"licensed">>, <<"unlicensed">>].
+
+%% @doc Every value a family's `&lt;&lt;"license_type"&gt;&gt;' takes when it is not `null'.
+-spec license_types() -> [binary()].
+license_types() ->
+    [<<"evaluation">>, <<"standard">>, <<"redistribute">>].
 
 %% @doc The dataset FAMILIES your organization is licensed to download.
 %%
@@ -319,6 +342,105 @@ database_download_bytes(Client, Id, Format) ->
         {error, Error} -> {error, Error}
     end.
 
+-spec oauth_metadata(client()) ->
+    {ok, vpndetection_oauth:metadata()} | {error, vpndetection_error:error()}.
+oauth_metadata(Client) ->
+    oauth_metadata(Client, #{}).
+
+%% @doc The authorization server's discovery document.
+%%
+%% Every `oauth_*' call sends NO credential, whatever the client was built with,
+%% and works the same on a client built without a key. `timeout_ms' in `Options'
+%% bounds each attempt of this call alone.
+-spec oauth_metadata(client(), oauth_options()) ->
+    {ok, vpndetection_oauth:metadata()} | {error, vpndetection_error:error()}.
+oauth_metadata(Client, Options) ->
+    vpndetection_oauth:metadata(Client, Options).
+
+-spec oauth_device_authorization(client(), binary() | string()) ->
+    {ok, vpndetection_oauth:device_authorization()} | {error, vpndetection_error:error()}.
+oauth_device_authorization(Client, ClientId) ->
+    oauth_device_authorization(Client, ClientId, #{}).
+
+%% @doc Start a device sign-in: show the person `user_code' and
+%% `verification_uri', then call {@link oauth_poll_device_token/3}.
+%%
+%% Client IDs are issued on request from support@vpndetection.io. `scope' is one
+%% space-delimited string, sent as given; the server grants what the client may
+%% ask for and silently drops the rest.
+-spec oauth_device_authorization(client(), binary() | string(), device_authorization_options()) ->
+    {ok, vpndetection_oauth:device_authorization()} | {error, vpndetection_error:error()}.
+oauth_device_authorization(Client, ClientId, Options) ->
+    Extra = [{atom_to_binary(Name), bin(Value)} || Name <- [scope, resource],
+                                                   {ok, Value} <- [maps:find(Name, Options)]],
+    vpndetection_oauth:device_authorization(Client, bin(ClientId), Extra, Options).
+
+-spec oauth_exchange_device_code(client(), binary() | string(), binary() | string()) ->
+    {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
+oauth_exchange_device_code(Client, ClientId, DeviceCode) ->
+    oauth_exchange_device_code(Client, ClientId, DeviceCode, #{}).
+
+%% @doc Exchange a device code for tokens, once. Until the person approves, this
+%% answers `{error, #{error_code := <<"authorization_pending">>}}';
+%% {@link oauth_poll_device_token/3} is the loop that waits for them.
+%%
+%% Never retried: the server spends the code when it answers, so a retry after a
+%% lost success could only fail and lose the tokens. The answer carries
+%% `apikey_id' and `apikey' when the person picked a key.
+-spec oauth_exchange_device_code(client(), binary() | string(), binary() | string(), oauth_options()) ->
+    {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
+oauth_exchange_device_code(Client, ClientId, DeviceCode, Options) ->
+    vpndetection_oauth:exchange_device_code(Client, bin(ClientId), bin(DeviceCode), Options).
+
+-spec oauth_exchange_refresh_token(client(), binary() | string(), binary() | string()) ->
+    {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
+oauth_exchange_refresh_token(Client, ClientId, RefreshToken) ->
+    oauth_exchange_refresh_token(Client, ClientId, RefreshToken, #{}).
+
+%% @doc Exchange a refresh token for a new pair. The token presented is spent, so
+%% keep the `refresh_token' this answers. Never retried; the answer may name the
+%% key in `apikey_id' but never carries `apikey'.
+-spec oauth_exchange_refresh_token(client(), binary() | string(), binary() | string(),
+                                   oauth_options()) ->
+    {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
+oauth_exchange_refresh_token(Client, ClientId, RefreshToken, Options) ->
+    vpndetection_oauth:exchange_refresh_token(Client, bin(ClientId), bin(RefreshToken), Options).
+
+-spec oauth_revoke(client(), binary() | string(), binary() | string()) ->
+    ok | {error, vpndetection_error:error()}.
+oauth_revoke(Client, ClientId, Token) ->
+    oauth_revoke(Client, ClientId, Token, #{}).
+
+%% @doc Revoke an access or a refresh token. A refresh token ends the whole grant
+%% and every token it issued, which is how a machine signs out.
+-spec oauth_revoke(client(), binary() | string(), binary() | string(), oauth_options()) ->
+    ok | {error, vpndetection_error:error()}.
+oauth_revoke(Client, ClientId, Token, Options) ->
+    vpndetection_oauth:revoke(Client, bin(ClientId), bin(Token), Options).
+
+-spec oauth_poll_device_token(client(), binary() | string(), vpndetection_oauth:device_authorization()) ->
+    {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
+oauth_poll_device_token(Client, ClientId, Device) ->
+    oauth_poll_device_token(Client, ClientId, Device, #{}).
+
+%% @doc Wait for the person to approve a device sign-in, and answer its tokens.
+%%
+%% Waits the device's `interval' seconds before EVERY exchange, the first
+%% included, and five seconds longer for good each time the server answers
+%% `slow_down'. A refusal answers `error_code' `<<"access_denied">>'; an expired
+%% code `<<"expired_token">>', with no `status' when the device's `expires_in'
+%% ran out here first. Any other failure, a timeout or an outage included, ends
+%% the wait unchanged; calling again with the same device is safe until it expires.
+%%
+%% It blocks the calling process until one of those outcomes. There is no
+%% cancellation handle, so run it in a process you can kill. `timeout_ms' bounds
+%% each exchange, never the whole wait.
+-spec oauth_poll_device_token(client(), binary() | string(), vpndetection_oauth:device_authorization(),
+                              oauth_options()) ->
+    {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
+oauth_poll_device_token(Client, ClientId, Device, Options) ->
+    vpndetection_oauth:poll_device_token(Client, bin(ClientId), Device, Options).
+
 to_file(Client, Id, Format, Dest, Partial, Fd) ->
     Sink = #{acc => Fd, fold => fun(Chunk, Handle) ->
         case file:write(Handle, Chunk) of
@@ -393,6 +515,21 @@ store(#{cache := undefined}, _Addr, Result) ->
 store(#{cache := Cache}, Addr, Result) ->
     vpndetection_cache:put(Cache, Addr, Result),
     {ok, Result}.
+
+batch(Client, Unique, Options, Concurrency) ->
+    {Answered, Pending} = lists:foldl(fun(Ip, {Acc, Rest}) ->
+        case local(Client, Ip) of
+            {ok, Result} -> {Acc#{Ip => {ok, Result}}, Rest};
+            miss -> {Acc, [Ip | Rest]}
+        end
+    end, {#{}, []}, Unique),
+    Chunks = chunk(lists:reverse(Pending), ?BATCH_MAX),
+    ByChunk = dispatch(fun(Chunk) -> lookup_chunk(Client, Chunk, Options) end,
+                       Chunks, Concurrency, #{}, #{}, #{}),
+    maps:fold(fun
+        (_Chunk, Answers, Acc) when is_map(Answers) -> maps:merge(Acc, Answers);
+        (Chunk, Error, Acc) -> maps:merge(Acc, maps:from_list([{Ip, Error} || Ip <- Chunk]))
+    end, Answered, ByChunk).
 
 %% Bounded fan-out. At most `Limit' workers are alive at any moment, so the
 %% concurrency setting is the number of requests actually in flight rather than

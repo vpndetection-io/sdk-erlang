@@ -310,6 +310,42 @@ a_batch_of_2500_addresses_is_three_requests_and_one_answer_each_test() ->
     [?assertMatch({ok, #{ip := Ip}}, maps:get(Ip, Got)) || Ip <- Addrs],
     vpndetection_stub:stop(Stub).
 
+%% A dispatcher that may run nothing waits for ever, so a concurrency below 1 is
+%% refused before any request, for every address it was given.
+a_batch_concurrency_below_one_is_refused_before_any_request_test() ->
+    Stub = vpndetection_stub:start(#{}),
+    Http = vpndetection_stub:http(Stub),
+    Client = vpndetection:new(#{http => Http, cache => false}),
+    Ips = [<<"9.9.9.9">>, <<"10.0.0.1">>],
+
+    [?assertEqual({Limit, lists:sort(Ips), [bad_request, bad_request]},
+                  {Limit, lists:sort(maps:keys(Got)), [Kind || {error, #{kind := Kind}} <- maps:values(Got)]})
+     || Limit <- [0, -1, 1.5],
+        Got <- [vpndetection:lookup_batch(Client, Ips, #{concurrency => Limit})]],
+    Zero = vpndetection:new(#{http => Http, cache => false, concurrency => 0}),
+    ?assertMatch(#{<<"9.9.9.9">> := {error, #{kind := bad_request, retryable := false}}},
+                 vpndetection:lookup_batch(Zero, [<<"9.9.9.9">>])),
+    ?assertEqual(0, vpndetection_stub:calls(Stub)),
+    vpndetection_stub:stop(Stub).
+
+%% The bound must cover the BODY: one that stops at the response head lets a body
+%% stalled after its headers run for as long as the server likes.
+a_body_stalled_after_its_headers_is_bounded_test_() ->
+    {timeout, 60, fun() -> assert_body_bounded({stall, 8000}) end}.
+
+%% A byte every 20 ms never leaves one read waiting long, so only a bound on the
+%% whole attempt ends it.
+a_body_trickled_a_byte_at_a_time_is_bounded_test_() ->
+    {timeout, 60, fun() -> assert_body_bounded({trickle, 20}) end}.
+
+%% The runtime lists are written by hand, so each is pinned to the committed spec
+%% in BOTH directions: a value the spec gains or drops fails here on the re-pin.
+the_exported_vocabularies_are_the_pinned_specs_test() ->
+    ?assertEqual(lists:sort(spec_enum(<<"    DatabaseFormat:">>)),
+                 lists:sort([atom_to_binary(F) || F <- vpndetection:database_formats()])),
+    ?assertEqual(lists:sort(spec_enum(<<"    Standing:">>)), lists:sort(vpndetection:standings())),
+    ?assertEqual(lists:sort(spec_license_types()), lists:sort(vpndetection:license_types())).
+
 %% `format()' checks nothing once compiled, so an atom from a flag or a config
 %% file has to be refused at runtime, before it costs a request.
 an_unpublished_format_is_refused_before_any_request_test() ->
@@ -347,6 +383,36 @@ every_format_the_pinned_spec_publishes_is_accepted_test() ->
     ?assertEqual(length(Published), vpndetection_stub:calls(Stub)),
     vpndetection_stub:stop(Stub).
 
+%% Each call's own bound (300 ms) fires first, then a call with no override waits
+%% for the client's (1 s), and the elapsed time says which one fired.
+assert_body_bounded(Pace) ->
+    Origin = vpndetection_origin:start(#{body_pace => Pace}),
+    Client = vpndetection:new(#{base_url => vpndetection_origin:base_url(Origin),
+                                cache => false, retries => 0, timeout_ms => 1000}),
+    PerCall = #{timeout_ms => 300},
+    Calls = [
+        {lookup, {250, 900}, fun() -> vpndetection:lookup(Client, <<"1.1.1.1">>, PerCall) end},
+        {lookup_batch, {250, 900}, fun() ->
+            maps:get(<<"1.1.1.1">>, vpndetection:lookup_batch(Client, [<<"1.1.1.1">>], PerCall))
+        end},
+        {oauth_exchange, {250, 900}, fun() ->
+            vpndetection:oauth_exchange_device_code(Client, <<"cli">>, <<"mo_dc_x">>, PerCall)
+        end},
+        {my_entitlement, {900, 2500}, fun() -> vpndetection:my_entitlement(Client) end},
+        {database_list, {900, 2500}, fun() -> vpndetection:database_list(Client) end},
+        {oauth_metadata, {900, 2500}, fun() -> vpndetection:oauth_metadata(Client) end}
+    ],
+    [begin
+         {Micros, Answer} = timer:tc(Call),
+         ?assertMatch({Name, {error, #{kind := network, retryable := true}}}, {Name, Answer}),
+         Ms = Micros div 1000,
+         ?assertEqual({Name, within, Window}, {Name, within(Ms, Window), Window})
+     end || {Name, Window, Call} <- Calls],
+    vpndetection_origin:stop(Origin).
+
+within(Ms, {Low, High}) when Ms >= Low, Ms < High -> within;
+within(Ms, _Window) -> {took_ms, Ms}.
+
 elapsed(Micros, Limit) when Micros < Limit -> fired_within_2s;
 elapsed(Micros, _Limit) -> {took_us, Micros}.
 
@@ -361,11 +427,23 @@ sent(Acc) ->
 %% schema's body is every line indented past its name, so another schema's enum
 %% cannot be read in its place.
 spec_formats() ->
-    {ok, Yaml} = file:read_file("spec/openapi.yaml"),
-    [_ | Rest] = lists:dropwhile(fun(Line) -> Line =/= <<"    DatabaseFormat:">> end,
-                                 binary:split(Yaml, <<"\n">>, [global])),
+    spec_enum(<<"    DatabaseFormat:">>).
+
+spec_enum(SchemaLine) ->
+    [_ | Rest] = lists:dropwhile(fun(Line) -> Line =/= SchemaLine end, spec_lines()),
     Schema = lists:takewhile(fun(Line) -> binary:match(Line, <<"      ">>) =:= {0, 6} end, Rest),
-    [Format || <<"        - ", Format/binary>> <- Schema].
+    [Value || <<"        - ", Value/binary>> <- Schema].
+
+%% `license_type' is an inline enum on the family, nullable, so `null' is not one
+%% of its values.
+spec_license_types() ->
+    [_ | Rest] = lists:dropwhile(fun(Line) -> Line =/= <<"        license_type:">> end, spec_lines()),
+    Property = lists:takewhile(fun(Line) -> binary:match(Line, <<"          ">>) =:= {0, 10} end, Rest),
+    [Value || <<"            - ", Value/binary>> <- Property, Value =/= <<"null">>].
+
+spec_lines() ->
+    {ok, Yaml} = file:read_file("spec/openapi.yaml"),
+    binary:split(Yaml, <<"\n">>, [global]).
 
 addr(N) ->
     list_to_binary(io_lib:format("9.~b.~b.~b", [1 + N div 65536, (N div 256) rem 256, N rem 256])).

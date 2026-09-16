@@ -88,9 +88,11 @@ serve(Socket, Counter, Options) ->
         {ok, Path, Query, Credentialed, Body} ->
             Counter ! {started, Path, Credentialed},
             timer:sleep(maps:get(delay_ms, Options, 0)),
-            case Path of
-                <<"/batch">> -> respond_batch(Socket, Body);
-                _ -> respond(Socket, Path, Query, Options)
+            case {maps:find(body_pace, Options), Path} of
+                {{ok, Pace}, _} -> paced(Socket, Pace);
+                {error, <<"/batch">>} -> respond_batch(Socket, Body);
+                {error, <<"/flaky">>} -> flaky(Socket, Counter);
+                {error, _} -> respond(Socket, Path, Query, Options)
             end,
             Counter ! finished,
             gen_tcp:close(Socket);
@@ -131,6 +133,40 @@ body(Socket, Length) ->
     case gen_tcp:recv(Socket, Length, 5000) of
         {ok, Body} -> Body;
         {error, _} -> <<>>
+    end.
+
+%% The head goes out at once and the body does not, so a bound that stops at the
+%% headers never sees the stall. `{stall, Ms}' sends half the body and waits;
+%% `{trickle, GapMs}' sends a byte per gap, so no single read waits long.
+paced(Socket, Pace) ->
+    Body = <<"{\"ip\":\"1.1.1.1\",\"is_vpn\":false}", (binary:copy(<<" ">>, 400))/binary>>,
+    send(Socket, 200, [{<<"content-type">>, <<"application/json">>},
+                       {<<"content-length">>, integer_to_binary(byte_size(Body))}], <<>>),
+    case Pace of
+        {stall, Ms} ->
+            Half = byte_size(Body) div 2,
+            _ = gen_tcp:send(Socket, binary:part(Body, 0, Half)),
+            timer:sleep(Ms),
+            gen_tcp:send(Socket, binary:part(Body, Half, byte_size(Body) - Half));
+        {trickle, GapMs} ->
+            trickle_bytes(Socket, Body, GapMs)
+    end.
+
+trickle_bytes(_Socket, <<>>, _GapMs) ->
+    ok;
+trickle_bytes(Socket, <<Byte, Rest/binary>>, GapMs) ->
+    case gen_tcp:send(Socket, <<Byte>>) of
+        ok -> timer:sleep(GapMs), trickle_bytes(Socket, Rest, GapMs);
+        {error, _} -> ok
+    end.
+
+%% Object storage failing before the first byte of its first answer, and serving
+%% the dataset to every later one.
+flaky(Socket, Counter) ->
+    case maps:get(<<"/flaky">>, ask(Counter, hits)) of
+        1 -> send(Socket, 503, [{<<"content-type">>, <<"application/xml">>}],
+                  <<"<Error><Code>SlowDown</Code></Error>">>);
+        _ -> respond(Socket, <<"/dataset">>, <<>>, #{})
     end.
 
 %% A batch is answered from the addresses in its body, every one not a VPN.

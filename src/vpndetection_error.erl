@@ -1,7 +1,7 @@
 %% @doc Why a request failed, and whether trying it again could ever help.
 -module(vpndetection_error).
 
--export([from_response/3, from_entry/2, from_transport/1]).
+-export([from_response/3, from_entry/2, from_transport/1, from_oauth/4, local_expiry/0]).
 
 -export_type([kind/0, error/0]).
 
@@ -27,7 +27,9 @@
     message := binary(),
     retryable := boolean(),
     status => 100..599,
-    retry_after => non_neg_integer()
+    retry_after => non_neg_integer(),
+    error_code => binary(),
+    error_description => binary()
 }.
 
 %% @doc Classify a non-2xx response.
@@ -43,6 +45,27 @@ from_response(Status, Headers, Body) ->
 -spec from_entry(100..599, binary()) -> error().
 from_entry(Status, Message) when is_integer(Status), is_binary(Message) ->
     classify(Status, undefined, Message).
+
+%% @doc The authorization server refusing an OAuth request: the ordinary error for
+%% its status, plus the RFC 6749 `error' code, and never retryable, because every
+%% code answers the request as it was made.
+-spec from_oauth(400..499, [{binary(), binary()}], binary(), binary() | undefined) -> error().
+from_oauth(Status, Headers, Code, Description) ->
+    Base = maps:remove(retry_after, classify(Status, retry_after(Headers), Code)),
+    case Description of
+        undefined ->
+            Base#{retryable := false, error_code => Code};
+        _ ->
+            Base#{retryable := false, error_code => Code, error_description => Description,
+                  message := <<Code/binary, ": ", Description/binary>>}
+    end.
+
+%% @doc A device-code poll reaching the code's lifetime before the server said so:
+%% coded `expired_token', and without a status, which is how it is told apart.
+-spec local_expiry() -> error().
+local_expiry() ->
+    #{kind => bad_request, retryable => false, message => <<"expired_token">>,
+      error_code => <<"expired_token">>}.
 
 %% @doc Classify a failure that never produced a response at all.
 -spec from_transport(term()) -> error().

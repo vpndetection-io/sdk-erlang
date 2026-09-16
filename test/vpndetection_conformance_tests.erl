@@ -154,6 +154,22 @@ a_large_batch_is_sent_in_chunks_of_a_thousand_test() ->
     vpndetection:close(Client),
     vpndetection_stub:stop(Stub).
 
+%% No cap on what one call takes: the chunking is the client's job.
+an_uncapped_batch_is_chunked_rather_than_refused_test() ->
+    Name = <<"uncapped-input-is-chunked">>,
+    Input = batch_input(Name),
+    Expect = batch_expect(Name),
+    Stub = vpndetection_stub:start(maps:from_list(
+        [{Ip, #{body => #{<<"ip">> => Ip, <<"is_vpn">> => false}}} || Ip <- Input])),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), cache => false}),
+    Got = vpndetection:lookup_batch(Client, Input),
+
+    ?assertEqual(maps:get(<<"httpRequests">>, Expect), vpndetection_stub:calls(Stub)),
+    ?assertEqual(maps:get(<<"keyCount">>, Expect), map_size(Got)),
+    [?assertMatch({ok, #{ip := Ip}}, maps:get(Ip, Got)) || Ip <- Input],
+    vpndetection:close(Client),
+    vpndetection_stub:stop(Stub).
+
 %% A per-entry failure carries no headers, so its 429 can only be a spent
 %% allowance, and a 500 is the server's; neither is retried per entry, because
 %% retries belong to the call and the call succeeded.

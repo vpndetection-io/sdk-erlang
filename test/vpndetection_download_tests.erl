@@ -94,6 +94,22 @@ a_transfer_that_broke_partway_is_not_retried_test_() ->
         done(Origin, Client, Path)
     end}.
 
+%% Before any byte reaches the sink there is nothing to undo, so object storage
+%% failing then is an outage like any other and the client's retries apply.
+object_storage_failing_before_the_body_is_retried_test_() ->
+    {timeout, 60, fun() ->
+        {Origin, Client} = origin(),
+        Path = scratch("flaky.csv.gz"),
+
+        Result = vpndetection:database_download(Client, <<"flaky">>, csvgz, Path),
+
+        ?assertEqual(2, vpndetection_origin:hits(Origin, <<"/flaky">>)),
+        Payload = vpndetection_origin:payload(),
+        ?assertEqual({ok, byte_size(Payload)}, Result),
+        ?assertEqual({ok, Payload}, file:read_file(Path)),
+        done(Origin, Client, Path)
+    end}.
+
 a_refused_link_leaves_no_partial_file_test_() ->
     {timeout, 60, fun() ->
         {Origin, Client} = origin(),

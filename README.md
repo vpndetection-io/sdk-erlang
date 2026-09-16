@@ -14,7 +14,7 @@ The library helps you query VPNDetection's APIs for anonymity detection includin
 {deps, [vpndetection]}.
 ```
 
-Requires Erlang/OTP 27 or newer. There are no runtime dependencies: everything the client needs is in OTP. From Elixir, add `{:vpndetection, "~> 3.1"}` to your `mix.exs` deps and call it as `:vpndetection`.
+Requires Erlang/OTP 27 or newer. There are no runtime dependencies: everything the client needs is in OTP. From Elixir, add `{:vpndetection, "~> 3.2"}` to your `mix.exs` deps and call it as `:vpndetection`.
 
 ## Usage
 
@@ -165,7 +165,7 @@ Client = vpndetection:new(#{retries => 4, timeout_ms => 30000}),
 {ok, Result} = vpndetection:lookup(Client, <<"45.83.91.1">>, #{retries => 0, timeout_ms => 2000}).
 ```
 
-`timeout_ms` bounds each attempt, so a call that is retried can take longer in total. The client's values are defaults: `lookup/3`, `lookup_batch/3`, `my_ip/2` and `my_entitlement/2` each take `retries` and `timeout_ms` for that call alone. During a download it bounds the wait between chunks instead, because a whole transfer can take minutes.
+`timeout_ms` bounds each attempt, body included, so a call that is retried can take longer in total. The client's values are defaults: `lookup/3`, `lookup_batch/3`, `my_ip/2` and `my_entitlement/2` each take `retries` and `timeout_ms` for that call alone, and every `oauth_*` function takes `timeout_ms`. During a download it bounds the wait between chunks instead, because a whole transfer can take minutes.
 
 ### Database downloads
 
@@ -177,7 +177,26 @@ If your key carries the `db.download` scope, the licensed databases are availabl
 {ok, Checksums} = vpndetection:database_checksums(Client, <<"vpn_ip_extended_v1">>, mmdb).
 ```
 
-`database_download_url/3` returns a time-limited link rather than the bytes, so you choose how to transfer a file that can run to gigabytes.
+`database_download_url/3` returns a time-limited link rather than the bytes, so you choose how to transfer a file that can run to gigabytes. `vpndetection:database_formats()` lists the formats these take, for checking one that came from a flag or a config file, and `standings()` and `license_types()` list what a family's `standing` and `license_type` can be.
+
+### Sign in with OAuth (device flow)
+
+A program running on a person's own machine can let them sign in with their browser and pick one of their API keys, instead of asking them to paste one.
+
+```erlang
+Client = vpndetection:new(),
+ClientId = <<"your-client-id">>,
+{ok, Device} = vpndetection:oauth_device_authorization(Client, ClientId,
+    #{scope => <<"account.read apikeys.read apikeys.reveal">>}),
+io:format("Open ~s and enter ~s~n", [maps:get(verification_uri, Device), maps:get(user_code, Device)]),
+{ok, Token} = vpndetection:oauth_poll_device_token(Client, ClientId, Device),
+Keyed = case Token of
+    #{apikey := Key} -> vpndetection:new(#{api_key => Key});
+    #{} -> error(no_api_key_picked)
+end.
+```
+
+A refusal answers `{error, #{error_code := <<"access_denied">>}}` and a code that expired first `{error, #{error_code := <<"expired_token">>}}`. Client IDs are issued on request from support@vpndetection.io, and `vpndetection:oauth_revoke(Client, ClientId, maps:get(refresh_token, Token))` signs the machine out.
 
 ### Absent is not false
 

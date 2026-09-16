@@ -5,11 +5,13 @@
 %% whether the key was carried is a boolean, and no caller ever sees the key.
 -module(staging_recorder).
 
--export([start/1, stop/1, http/1, facts/1, carried_key/1, requests/1, paths/1, record/3]).
+-export([start/1, stop/1, http/1, facts/1, carried_key/1, requests/1, paths/1, batch_ips/1,
+         record/3]).
 
 -export_type([fact/0]).
 
--type fact() :: #{origin := binary(), path := binary(), carried_key := boolean()}.
+-type fact() :: #{origin := binary(), path := binary(), carried_key := boolean(),
+                  ips := [binary()]}.
 
 -spec start(binary() | undefined) -> pid().
 start(Key) ->
@@ -53,6 +55,12 @@ requests(Pid) ->
 paths(Pid) ->
     lists:usort([Path || #{path := Path} <- facts(Pid)]).
 
+%% @doc The distinct addresses POST /batch requests carried, sorted. They are the
+%% test's own input, so remembering them publishes nothing.
+-spec batch_ips(pid()) -> [binary()].
+batch_ips(Pid) ->
+    lists:usort(lists:append([Ips || #{ips := Ips} <- facts(Pid)])).
+
 loop(Key, Facts) ->
     receive
         {seen, Request} ->
@@ -68,7 +76,18 @@ fact(Key, #{url := Url} = Request) ->
     #{scheme := Scheme, host := Host, path := Path} = uri_string:parse(Url),
     #{origin => iolist_to_binary([Scheme, "://", Host]),
       path => Path,
-      carried_key => carried(Key, Request)}.
+      carried_key => carried(Key, Request),
+      ips => ips(Request)}.
+
+ips(#{body := Body}) ->
+    try json:decode(Body) of
+        #{<<"ips">> := Ips} when is_list(Ips) -> Ips;
+        _ -> []
+    catch
+        _:_ -> []
+    end;
+ips(_Request) ->
+    [].
 
 %% The URL is checked as well as the headers: a key moved into a query parameter
 %% is still a key handed to whoever is on the other end.

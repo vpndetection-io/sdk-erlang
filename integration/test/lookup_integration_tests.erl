@@ -136,7 +136,8 @@ a_batch_collapses_duplicates_and_keeps_bogons_off_the_wire_test_() ->
                                                  <<"8.8.8.8">>]),
 
         ?assertEqual(3, map_size(Got)),
-        ?assertEqual([<<"/", Probe/binary>>, <<"/8.8.8.8">>], staging_recorder:paths(Recorder)),
+        ?assertEqual([<<"/batch">>], staging_recorder:paths(Recorder)),
+        ?assertEqual(lists:sort([Probe, <<"8.8.8.8">>]), staging_recorder:batch_ips(Recorder)),
         ?assertMatch({ok, #{is_bogon := true}}, maps:get(<<"10.0.0.1">>, Got)),
         [?assertMatch({Ip, {ok, _}}, {Ip, maps:get(Ip, Got)}) || Ip <- [Probe, <<"8.8.8.8">>]],
         vpndetection:close(Client),

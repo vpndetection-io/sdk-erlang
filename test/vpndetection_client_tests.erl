@@ -262,6 +262,111 @@ a_transport_failure_is_an_error_not_a_crash_test() ->
     ?assertMatch({error, #{kind := network, retryable := true}},
                  vpndetection:lookup(Client, <<"1.1.1.1">>)).
 
+%% The per-call bound is set BELOW the client's against an origin that stalls
+%% past both, so a call that ignored it would wait out the client's bound
+%% instead, and the elapsed time says which one fired.
+a_per_call_timeout_below_the_clients_is_the_one_that_fires_test_() ->
+    {timeout, 60, fun() ->
+        Origin = vpndetection_origin:start(#{delay_ms => 8000}),
+        Client = vpndetection:new(#{base_url => vpndetection_origin:base_url(Origin),
+                                    cache => false, retries => 0, timeout_ms => 4000}),
+        PerCall = #{timeout_ms => 300},
+        Calls = [
+            {lookup, fun() -> vpndetection:lookup(Client, <<"1.1.1.1">>, PerCall) end},
+            {my_ip, fun() -> vpndetection:my_ip(Client, PerCall) end},
+            {my_entitlement, fun() -> vpndetection:my_entitlement(Client, PerCall) end},
+            {lookup_batch, fun() ->
+                maps:get(<<"1.1.1.1">>, vpndetection:lookup_batch(Client, [<<"1.1.1.1">>], PerCall))
+            end}
+        ],
+
+        [begin
+             {Micros, Answer} = timer:tc(Call),
+             ?assertMatch({Name, {error, #{kind := network, retryable := true}}}, {Name, Answer}),
+             ?assertEqual({Name, fired_within_2s}, {Name, elapsed(Micros, 2000000)})
+         end || {Name, Call} <- Calls],
+        vpndetection_origin:stop(Origin)
+    end}.
+
+%% No cap on what one call accepts: chunking to the endpoint's 1000 is the
+%% client's job, so 2,500 addresses are three requests rather than an error.
+a_batch_of_2500_addresses_is_three_requests_and_one_answer_each_test() ->
+    Addrs = [addr(N) || N <- lists:seq(0, 2499)],
+    Stub = vpndetection_stub:start(routes(Addrs)),
+    Http = vpndetection_stub:http(Stub),
+    Parent = self(),
+    Recording = fun(#{method := Method, url := Url} = Request) ->
+        Ips = maps:get(<<"ips">>, json:decode(maps:get(body, Request, <<"{}">>)), []),
+        Parent ! {sent, Method, maps:get(path, uri_string:parse(Url)), length(Ips)},
+        Http(Request)
+    end,
+    Client = vpndetection:new(#{http => Recording, cache => false}),
+
+    Got = vpndetection:lookup_batch(Client, Addrs),
+
+    ?assertEqual([{post, <<"/batch">>, 500}, {post, <<"/batch">>, 1000}, {post, <<"/batch">>, 1000}],
+                 lists:sort(sent([]))),
+    ?assertEqual(2500, map_size(Got)),
+    [?assertMatch({ok, #{ip := Ip}}, maps:get(Ip, Got)) || Ip <- Addrs],
+    vpndetection_stub:stop(Stub).
+
+%% `format()' checks nothing once compiled, so an atom from a flag or a config
+%% file has to be refused at runtime, before it costs a request.
+an_unpublished_format_is_refused_before_any_request_test() ->
+    Stub = vpndetection_stub:start(#{}),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), cache => false}),
+    Dir = list_to_binary(os:getenv("TMPDIR", "/tmp")),
+    Path = <<Dir/binary, "/vpndetection-", (integer_to_binary(erlang:unique_integer([positive])))/binary,
+             "-refused.mmdb">>,
+    Calls = [
+        fun(F) -> vpndetection:database_checksums(Client, <<"vpn_ip_v1">>, F) end,
+        fun(F) -> vpndetection:database_download_url(Client, <<"vpn_ip_v1">>, F) end,
+        fun(F) -> vpndetection:database_download(Client, <<"vpn_ip_v1">>, F, Path) end,
+        fun(F) -> vpndetection:database_download_bytes(Client, <<"vpn_ip_v1">>, F) end
+    ],
+
+    [?assertMatch({Format, {error, #{kind := bad_request, retryable := false}}},
+                  {Format, Call(Format)})
+     || Format <- [zip, 'MMDB', <<"mmdb">>, "csvgz"], Call <- Calls],
+    ?assertEqual(0, vpndetection_stub:calls(Stub)),
+    vpndetection_stub:stop(Stub).
+
+%% The runtime list is written by hand, so it is pinned to the committed spec: a
+%% format the spec gains fails here on the re-pin rather than being refused.
+every_format_the_pinned_spec_publishes_is_accepted_test() ->
+    Published = spec_formats(),
+    ?assertNotEqual([], Published),
+    Stub = vpndetection_stub:start(#{<<"/api/v1/database/download">> =>
+        #{status => 302, headers => #{<<"Location">> => <<"https://storage.example/f">>}}}),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), cache => false}),
+
+    [?assertEqual({Format, {ok, <<"https://storage.example/f">>}},
+                  {Format, vpndetection:database_download_url(Client, <<"vpn_ip_v1">>,
+                                                              binary_to_atom(Format))})
+     || Format <- Published],
+    ?assertEqual(length(Published), vpndetection_stub:calls(Stub)),
+    vpndetection_stub:stop(Stub).
+
+elapsed(Micros, Limit) when Micros < Limit -> fired_within_2s;
+elapsed(Micros, _Limit) -> {took_us, Micros}.
+
+sent(Acc) ->
+    receive
+        {sent, Method, Path, Size} -> sent([{Method, Path, Size} | Acc])
+    after 0 ->
+        Acc
+    end.
+
+%% The `DatabaseFormat' enum, read by line because OTP ships no YAML parser. The
+%% schema's body is every line indented past its name, so another schema's enum
+%% cannot be read in its place.
+spec_formats() ->
+    {ok, Yaml} = file:read_file("spec/openapi.yaml"),
+    [_ | Rest] = lists:dropwhile(fun(Line) -> Line =/= <<"    DatabaseFormat:">> end,
+                                 binary:split(Yaml, <<"\n">>, [global])),
+    Schema = lists:takewhile(fun(Line) -> binary:match(Line, <<"      ">>) =:= {0, 6} end, Rest),
+    [Format || <<"        - ", Format/binary>> <- Schema].
+
 addr(N) ->
     list_to_binary(io_lib:format("9.~b.~b.~b", [1 + N div 65536, (N div 256) rem 256, N rem 256])).
 

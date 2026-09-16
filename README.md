@@ -71,7 +71,7 @@ Note the key types differ: a lookup answers a map with ATOM keys, while the enti
 
 ### Batch lookup
 
-Look up many addresses at once. Bogons and cached answers are handled locally, and everything else goes to the batch endpoint in chunks of up to 1000 addresses, in parallel:
+Look up as many addresses as you like at once. Bogons and cached answers are handled locally, and everything else goes to the batch endpoint in chunks of up to 1000 addresses, in parallel:
 
 ```erlang
 Results = vpndetection:lookup_batch(Client, [<<"45.83.91.1">>, <<"8.8.8.8">>, <<"1.1.1.1">>]),
@@ -84,10 +84,10 @@ end, Results).
 
 Results are keyed by address, so duplicates in your list collapse into a single entry and one address failing never loses the rest: it carries its error as its value, with the status the API would have given that address on its own. Erlang maps carry no order, so iterate your own list when order matters.
 
-How many chunks are in flight at once, and how many times a failed chunk is retried, are configurable per call:
+How many chunks are in flight at once, how many times a failed chunk is retried, and how long each chunk's request may take are configurable per call:
 
 ```erlang
-Results = vpndetection:lookup_batch(Client, ManyIps, #{concurrency => 4, retries => 4}).
+Results = vpndetection:lookup_batch(Client, ManyIps, #{concurrency => 4, retries => 4, timeout_ms => 5000}).
 ```
 
 ### Caching
@@ -156,6 +156,16 @@ end.
 `kind` is one of `bad_request`, `unauthorized`, `forbidden`, `rate_limited`, `quota_exceeded`, `server_error` or `network`. `status` carries the HTTP status where there was one.
 
 Note that `rate_limited` and `quota_exceeded` both arrive as HTTP 429 and are not the same thing. A rate limit is when the API faces extreme traffic bursts and so retrying later works; but a spent quota needs your allowance raised or the window to roll over. The library retries rate limits for you, but not if your quota is exceeded.
+
+### Timeouts and retries
+
+```erlang
+Client = vpndetection:new(#{retries => 4, timeout_ms => 30000}),
+
+{ok, Result} = vpndetection:lookup(Client, <<"45.83.91.1">>, #{retries => 0, timeout_ms => 2000}).
+```
+
+`timeout_ms` bounds each attempt, so a call that is retried can take longer in total. The client's values are defaults: `lookup/3`, `lookup_batch/3`, `my_ip/2` and `my_entitlement/2` each take `retries` and `timeout_ms` for that call alone. During a download it bounds the wait between chunks instead, because a whole transfer can take minutes.
 
 ### Database downloads
 

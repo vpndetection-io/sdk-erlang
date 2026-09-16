@@ -53,9 +53,12 @@
     http => vpndetection_http:http_fun()
 }.
 
--type lookup_options() :: #{retries => non_neg_integer()}.
--type batch_options() :: #{retries => non_neg_integer(), concurrency => pos_integer()}.
+-type lookup_options() :: #{retries => non_neg_integer(), timeout_ms => pos_integer()}.
+-type batch_options() :: #{retries => non_neg_integer(), concurrency => pos_integer(),
+                           timeout_ms => pos_integer()}.
 -type format() :: csvgz | mmdb.
+%% The same set at runtime, because `format()' checks nothing once compiled.
+-define(FORMATS, [csvgz, mmdb]).
 
 -spec new() -> client().
 new() ->
@@ -118,6 +121,10 @@ lookup(Client, Ip) ->
 %%
 %% A bogon is answered locally and never reaches the network. Everything else is
 %% served, then cached for this client alone.
+%%
+%% `Options' overrides the client's `retries' and `timeout_ms' for this call
+%% alone. `timeout_ms' bounds each attempt, so a retried call can take longer in
+%% total.
 -spec lookup(client(), binary() | string(), lookup_options()) ->
     {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}.
 lookup(Client, Ip, Options) ->
@@ -146,7 +153,7 @@ my_ip(Client) ->
     {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}.
 my_ip(Client, Options) ->
     Retries = maps:get(retries, Options, maps:get(retries, Client)),
-    case vpndetection_http:get_json(Client, <<"/myip">>, [], Retries) of
+    case vpndetection_http:get_json(bound(Client, Options), <<"/myip">>, [], Retries) of
         {ok, Body} -> {ok, vpndetection_result:from_wire(Body)};
         {error, Error} -> {error, Error}
     end.
@@ -175,7 +182,7 @@ my_entitlement(Client) ->
     {ok, map()} | {error, vpndetection_error:error()}.
 my_entitlement(Client, Options) ->
     Retries = maps:get(retries, Options, maps:get(retries, Client)),
-    vpndetection_http:get_json(Client, <<"/api/v1/entitlement">>, [], Retries).
+    vpndetection_http:get_json(bound(Client, Options), <<"/api/v1/entitlement">>, [], Retries).
 
 -spec lookup_batch(client(), [binary() | string()]) ->
     #{binary() => {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}}.
@@ -195,8 +202,9 @@ lookup_batch(Client, Ips) ->
 %% Erlang maps have no insertion order, so the result is a set of keys rather
 %% than a sequence.
 %%
-%% `concurrency' and `retries' are overridable here, per call, so one large batch
-%% does not need a second client built to widen it.
+%% `concurrency', `retries' and `timeout_ms' are overridable here, per call, so
+%% one large batch does not need a second client built to widen it. There is no
+%% cap on how many addresses one call takes; chunking them is this function's job.
 -spec lookup_batch(client(), [binary() | string()], batch_options()) ->
     #{binary() => {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}}.
 lookup_batch(Client, Ips, Options) ->
@@ -244,8 +252,13 @@ database_metadata(Client, Id) ->
 -spec database_checksums(client(), binary() | string(), format()) ->
     {ok, map()} | {error, vpndetection_error:error()}.
 database_checksums(Client, Id, Format) ->
-    Query = [{<<"id">>, bin(Id)}, {<<"format">>, atom_to_binary(Format)}],
-    unwrap(get_json(Client, <<"/api/v1/database/checksum">>, Query), <<"checksums">>).
+    case format_name(Format) of
+        {ok, Name} ->
+            Query = [{<<"id">>, bin(Id)}, {<<"format">>, Name}],
+            unwrap(get_json(Client, <<"/api/v1/database/checksum">>, Query), <<"checksums">>);
+        {error, Error} ->
+            {error, Error}
+    end.
 
 %% @doc Your organization's recent download attempts, newest first.
 -spec database_downloads(client()) -> {ok, [map()]} | {error, vpndetection_error:error()}.
@@ -260,9 +273,14 @@ database_downloads(Client) ->
 -spec database_download_url(client(), binary() | string(), format()) ->
     {ok, binary()} | {error, vpndetection_error:error()}.
 database_download_url(Client, Id, Format) ->
-    Query = [{<<"id">>, bin(Id)}, {<<"format">>, atom_to_binary(Format)}],
-    vpndetection_http:get_redirect(Client, <<"/api/v1/database/download">>, Query,
-                                   maps:get(retries, Client)).
+    case format_name(Format) of
+        {ok, Name} ->
+            Query = [{<<"id">>, bin(Id)}, {<<"format">>, Name}],
+            vpndetection_http:get_redirect(Client, <<"/api/v1/database/download">>, Query,
+                                           maps:get(retries, Client));
+        {error, Error} ->
+            {error, Error}
+    end.
 
 %% @doc Download one dataset file to `Path', and answer how many bytes landed.
 %%
@@ -358,7 +376,7 @@ served(Client, Addr, Options) ->
         miss ->
             Path = <<"/", (vpndetection_http:escape(Addr))/binary>>,
             Retries = maps:get(retries, Options, maps:get(retries, Client)),
-            case vpndetection_http:get_json(Client, Path, [], Retries) of
+            case vpndetection_http:get_json(bound(Client, Options), Path, [], Retries) of
                 {ok, Body} -> store(Client, Addr, vpndetection_result:from_wire(Body));
                 {error, Error} -> {error, Error}
             end
@@ -425,7 +443,7 @@ chunk(List, Size) ->
 lookup_chunk(Client, Chunk, Options) ->
     Retries = maps:get(retries, Options, maps:get(retries, Client)),
     Body = iolist_to_binary(json:encode(#{<<"ips">> => Chunk})),
-    case vpndetection_http:post_json(Client, <<"/batch">>, Body, Retries) of
+    case vpndetection_http:post_json(bound(Client, Options), <<"/batch">>, Body, Retries) of
         {ok, Answer} ->
             Results = object(maps:get(<<"results">>, Answer, #{})),
             Errors = object(maps:get(<<"errors">>, Answer, #{})),
@@ -454,6 +472,24 @@ batch_answer(Client, Ip, Results, Errors) ->
 
 get_json(Client, Path, Query) ->
     vpndetection_http:get_json(Client, Path, Query, maps:get(retries, Client)).
+
+%% The client with this call's `timeout_ms' in place of its own, which is the one
+%% the transport reads for every request it builds.
+bound(Client, Options) ->
+    Client#{timeout_ms := maps:get(timeout_ms, Options, maps:get(timeout_ms, Client))}.
+
+%% An unpublished format is refused here rather than sent, where it would cost a
+%% round trip and come back a 400 naming nothing the caller can act on.
+format_name(Format) ->
+    case lists:member(Format, ?FORMATS) of
+        true ->
+            {ok, atom_to_binary(Format)};
+        false ->
+            Message = io_lib:format("~p is not a published format; expected one of ~p",
+                                    [Format, ?FORMATS]),
+            {error, #{kind => bad_request, retryable => false,
+                      message => iolist_to_binary(Message)}}
+    end.
 
 unwrap({ok, Body}, Key) ->
     case Body of

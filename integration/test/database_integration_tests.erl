@@ -1,5 +1,5 @@
 %% The licensed-download half, which only the max key can reach: it is the tier
-%% holding dataset licences, and `db.download' is a scope the other three keys do
+%% holding dataset licenses, and `db.download' is a scope the other three keys do
 %% not carry.
 %%
 %% The transfer is budgeted before it starts. Metadata publishes a size per
@@ -18,7 +18,7 @@
 %% tripping it means the suite is pointed somewhere unintended, which is exactly
 %% when a transfer must not go ahead.
 -define(CEILING, 8 * 1024 * 1024).
-%% A real catalogue id the max organization holds no licence for.
+%% A real catalogue id the max organization holds no license for.
 -define(UNLICENSED, <<"hosting_ip_v1">>).
 -define(DOWNLOAD_PATH, <<"/api/v1/database/download">>).
 
@@ -78,7 +78,7 @@ assert_family(Family) ->
             Base
     end.
 
-%% A licence refusal names itself in `rc'. Falling back to the status means the
+%% A license refusal names itself in `rc'. Falling back to the status means the
 %% client never read the envelope, and the caller cannot tell "never bought this"
 %% from "your term lapsed" without asking us.
 a_dataset_the_organization_does_not_license_is_refused_cleanly_test_() ->

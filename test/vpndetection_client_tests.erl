@@ -132,7 +132,7 @@ database_responses_are_unwrapped_at_the_right_depth_test() ->
                    <<"sha256">> => <<"s256">>, <<"sha512">> => <<"s512">>}, Sums),
     ?assertEqual({ok, <<"s256">>}, maps:find(<<"sha256">>, Sums)),
 
-    %% A licence covers a FAMILY, and the id a download takes lives one level down
+    %% A license covers a FAMILY, and the id a download takes lives one level down
     %% under `versions'. The spec used to claim the family carried an `id' and a
     %% `formats' of its own, so a caller who believed it had no way to name a
     %% downloadable dataset at all.

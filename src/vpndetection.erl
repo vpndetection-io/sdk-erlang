@@ -251,7 +251,7 @@ license_types() ->
 
 %% @doc The dataset FAMILIES your organization is licensed to download.
 %%
-%% A licence covers a family (`vpn_ip'), while a download names one of its
+%% A license covers a family (`vpn_ip'), while a download names one of its
 %% versions (`vpn_ip_v1'), so the ids {@link database_download/4} and
 %% {@link database_checksums/3} take come from a family's `&lt;&lt;"versions"&gt;&gt;'
 %% rather than from the family itself.

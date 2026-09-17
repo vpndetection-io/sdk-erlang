@@ -125,7 +125,7 @@ a_refused_link_leaves_no_partial_file_test_() ->
         done(Origin, Client, Path)
     end}.
 
-%% A dataset the organization holds no licence for. The API says which refusal it
+%% A dataset the organization holds no license for. The API says which refusal it
 %% is in `rc', and reading it is what separates "not licensed" from "your term
 %% lapsed" without a support ticket.
 an_unlicensed_dataset_is_refused_once_carrying_the_api_rc_test_() ->

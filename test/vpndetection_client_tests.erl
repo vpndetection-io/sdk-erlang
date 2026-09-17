@@ -148,6 +148,29 @@ database_responses_are_unwrapped_at_the_right_depth_test() ->
     vpndetection:close(Client),
     vpndetection_stub:stop(Stub).
 
+%% The limit asked for is the one on the wire, and none goes out unless asked for,
+%% so the default and the clamp stay the server's to change.
+the_downloads_limit_reaches_the_query_string_only_when_asked_for_test() ->
+    Stub = vpndetection_stub:start(#{<<"/api/v1/database/downloads">> =>
+        #{body => #{<<"downloads">> => []}}}),
+    Http = vpndetection_stub:http(Stub),
+    Parent = self(),
+    Recording = fun(#{url := Url} = Request) ->
+        Parent ! {requested, Url},
+        Http(Request)
+    end,
+    Client = vpndetection:new(#{http => Recording, api_key => <<"k">>, cache => false}),
+
+    {ok, []} = vpndetection:database_downloads(Client, #{limit => 7}),
+    {ok, []} = vpndetection:database_downloads(Client),
+    {ok, []} = vpndetection:database_downloads(Client, #{timeout_ms => 5000}),
+
+    ?assertEqual([{<<"/api/v1/database/downloads">>, [{<<"limit">>, <<"7">>}]},
+                  {<<"/api/v1/database/downloads">>, []},
+                  {<<"/api/v1/database/downloads">>, []}],
+                 [path_and_query(Url) || Url <- requested([])]),
+    vpndetection_stub:stop(Stub).
+
 %% The download endpoint answers 302 to object storage. Following it would pull a
 %% dataset that runs to gigabytes into one binary, so the origin here promises
 %% five of them and the assertion is that nobody ever asked for it.
@@ -398,8 +421,10 @@ assert_body_bounded(Pace) ->
         {oauth_exchange, {250, 900}, fun() ->
             vpndetection:oauth_exchange_device_code(Client, <<"cli">>, <<"mo_dc_x">>, PerCall)
         end},
+        {database_downloads, {250, 900}, fun() -> vpndetection:database_downloads(Client, PerCall) end},
         {my_entitlement, {900, 2500}, fun() -> vpndetection:my_entitlement(Client) end},
         {database_list, {900, 2500}, fun() -> vpndetection:database_list(Client) end},
+        {database_downloads_default, {900, 2500}, fun() -> vpndetection:database_downloads(Client) end},
         {oauth_metadata, {900, 2500}, fun() -> vpndetection:oauth_metadata(Client) end}
     ],
     [begin
@@ -422,6 +447,17 @@ sent(Acc) ->
     after 0 ->
         Acc
     end.
+
+requested(Acc) ->
+    receive
+        {requested, Url} -> requested([Url | Acc])
+    after 0 ->
+        lists:reverse(Acc)
+    end.
+
+path_and_query(Url) ->
+    Parsed = uri_string:parse(Url),
+    {maps:get(path, Parsed), uri_string:dissect_query(maps:get(query, Parsed, <<>>))}.
 
 %% The `DatabaseFormat' enum, read by line because OTP ships no YAML parser. The
 %% schema's body is every line indented past its name, so another schema's enum

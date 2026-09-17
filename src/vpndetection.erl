@@ -16,15 +16,16 @@
 -export([lookup/2, lookup/3, lookup_batch/2, lookup_batch/3]).
 -export([my_ip/1, my_ip/2, my_entitlement/1, my_entitlement/2]).
 -export([database_list/1, database_metadata/2, database_checksums/3,
-         database_downloads/1, database_download_url/3, database_download/4,
-         database_download_bytes/3]).
+         database_downloads/1, database_downloads/2, database_download_url/3,
+         database_download/4, database_download_bytes/3]).
 -export([database_formats/0, standings/0, license_types/0]).
 -export([oauth_metadata/1, oauth_metadata/2, oauth_device_authorization/2,
          oauth_device_authorization/3, oauth_exchange_device_code/3, oauth_exchange_device_code/4,
          oauth_exchange_refresh_token/3, oauth_exchange_refresh_token/4, oauth_revoke/3, oauth_revoke/4,
          oauth_poll_device_token/3, oauth_poll_device_token/4]).
 
--export_type([client/0, options/0, lookup_options/0, batch_options/0, format/0]).
+-export_type([client/0, options/0, lookup_options/0, batch_options/0, downloads_options/0,
+              format/0]).
 -export_type([oauth_options/0, device_authorization_options/0]).
 
 -define(DEFAULT_BASE_URL, <<"https://api.vpndetection.io">>).
@@ -62,6 +63,7 @@
 -type lookup_options() :: #{retries => non_neg_integer(), timeout_ms => pos_integer()}.
 -type batch_options() :: #{retries => non_neg_integer(), concurrency => pos_integer(),
                            timeout_ms => pos_integer()}.
+-type downloads_options() :: #{limit => pos_integer(), timeout_ms => pos_integer()}.
 -type format() :: csvgz | mmdb.
 %% The same set at runtime, because `format()' checks nothing once compiled.
 -define(FORMATS, [csvgz, mmdb]).
@@ -283,10 +285,25 @@ database_checksums(Client, Id, Format) ->
             {error, Error}
     end.
 
-%% @doc Your organization's recent download attempts, newest first.
 -spec database_downloads(client()) -> {ok, [map()]} | {error, vpndetection_error:error()}.
 database_downloads(Client) ->
-    unwrap(get_json(Client, <<"/api/v1/database/downloads">>, []), <<"downloads">>).
+    database_downloads(Client, #{}).
+
+%% @doc Your organization's recent download attempts, newest first.
+%%
+%% Refusals are listed too: a denial is what answers "it stopped working", and
+%% its absence answers nothing. `limit' defaults to 50 and the API clamps it
+%% to 200. `timeout_ms' bounds each attempt of this call alone, so a retried
+%% call can take longer in total.
+-spec database_downloads(client(), downloads_options()) ->
+    {ok, [map()]} | {error, vpndetection_error:error()}.
+database_downloads(Client, Options) ->
+    Query = case maps:find(limit, Options) of
+        {ok, Limit} -> [{<<"limit">>, integer_to_binary(Limit)}];
+        error -> []
+    end,
+    unwrap(get_json(bound(Client, Options), <<"/api/v1/database/downloads">>, Query),
+           <<"downloads">>).
 
 %% @doc The time-limited URL for one dataset file.
 %%

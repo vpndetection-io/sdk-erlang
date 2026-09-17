@@ -14,7 +14,7 @@ The library helps you query VPNDetection's APIs for anonymity detection includin
 {deps, [vpndetection]}.
 ```
 
-Requires Erlang/OTP 27 or newer. There are no runtime dependencies: everything the client needs is in OTP. From Elixir, add `{:vpndetection, "~> 3.2"}` to your `mix.exs` deps and call it as `:vpndetection`.
+Requires Erlang/OTP 27 or newer. There are no runtime dependencies: everything the client needs is in OTP. From Elixir, add `{:vpndetection, "~> 3.3"}` to your `mix.exs` deps and call it as `:vpndetection`.
 
 ## Usage
 
@@ -165,7 +165,7 @@ Client = vpndetection:new(#{retries => 4, timeout_ms => 30000}),
 {ok, Result} = vpndetection:lookup(Client, <<"45.83.91.1">>, #{retries => 0, timeout_ms => 2000}).
 ```
 
-`timeout_ms` bounds each attempt, body included, so a call that is retried can take longer in total. The client's values are defaults: `lookup/3`, `lookup_batch/3`, `my_ip/2` and `my_entitlement/2` each take `retries` and `timeout_ms` for that call alone, and every `oauth_*` function takes `timeout_ms`. During a download it bounds the wait between chunks instead, because a whole transfer can take minutes.
+`timeout_ms` bounds each attempt, body included, so a call that is retried can take longer in total. The client's values are defaults: `lookup/3`, `lookup_batch/3`, `my_ip/2` and `my_entitlement/2` each take `retries` and `timeout_ms` for that call alone, and `database_downloads/2` and every `oauth_*` function take `timeout_ms`. During a download it bounds the wait between chunks instead, because a whole transfer can take minutes.
 
 ### Database downloads
 
@@ -178,6 +178,15 @@ If your key carries the `db.download` scope, the licensed databases are availabl
 ```
 
 `database_download_url/3` returns a time-limited link rather than the bytes, so you choose how to transfer a file that can run to gigabytes. `vpndetection:database_formats()` lists the formats these take, for checking one that came from a flag or a config file, and `standings()` and `license_types()` list what a family's `standing` and `license_type` can be.
+
+`database_downloads/2` lists your organization's recent download attempts, newest first, refusals included. A denial is what answers "it stopped working", and its absence answers nothing. `limit` defaults to 50 and the API clamps it to 200:
+
+```erlang
+{ok, Attempts} = vpndetection:database_downloads(Client, #{limit => 20}),
+
+[io:format("~s ~s ~s~n", [maps:get(<<"created">>, A), maps:get(<<"dataset_id">>, A), maps:get(<<"outcome">>, A)])
+ || A <- Attempts].
+```
 
 ### Sign in with OAuth (device flow)
 

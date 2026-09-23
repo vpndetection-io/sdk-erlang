@@ -15,7 +15,7 @@
     method := get | post,
     url := binary(),
     headers := [{binary(), binary()}],
-    timeout_ms := pos_integer(),
+    timeout_ms := pos_integer() | infinity,
     body => binary(),
     sink => sink()
 }.
@@ -55,6 +55,7 @@
 -define(PROFILE, vpndetection_httpc).
 -define(BACKOFF_BASE_MS, 200).
 -define(BACKOFF_CAP_MS, 5000).
+-define(MAX_RETRY_AFTER_MS, 2147483647).
 
 %% @doc Start what the default transport needs.
 -spec ensure_ready() -> ok.
@@ -104,7 +105,7 @@ json_object(Result) ->
 -spec oauth_request(map(), binary(), [{binary(), binary()}] | undefined) -> request().
 oauth_request(#{base_url := BaseUrl, timeout_ms := TimeoutMs, user_agent := Agent}, Path, Form) ->
     Headers = [{<<"accept">>, <<"application/json">>}, {<<"user-agent">>, Agent}],
-    Request = #{method => get, url => <<(trim_slash(BaseUrl))/binary, Path/binary>>,
+    Request = #{method => get, url => <<BaseUrl/binary, Path/binary>>,
                 headers => Headers, timeout_ms => TimeoutMs},
     case Form of
         undefined ->
@@ -318,9 +319,12 @@ attempt(#{http := Http} = Client, Request, Retries, Handle, Attempt) ->
             Result
     end.
 
-%% A server-supplied Retry-After outranks our own schedule: it is the only party
-%% that knows when the limit it just applied lifts.
-backoff(#{retry_after := Seconds}, _Attempt) when Seconds > 0 ->
+%% A server-supplied Retry-After outranks our own schedule, since it is the only
+%% party that knows when the limit lifts; one longer than ~24.8 days
+%% (`int.MaxValue' ms, the bound .NET uses and perl takes, UMAN-4485) is waited
+%% out on the schedule instead, still `rate_limited', because `timer:sleep' would
+%% otherwise hold the call for as long as the header says.
+backoff(#{retry_after := Seconds}, _Attempt) when Seconds > 0, Seconds * 1000 =< ?MAX_RETRY_AFTER_MS ->
     Seconds * 1000;
 backoff(_Error, Attempt) ->
     min(?BACKOFF_CAP_MS, ?BACKOFF_BASE_MS bsl Attempt).
@@ -352,12 +356,6 @@ query_string(Query) ->
 form(Pairs) ->
     Encoded = [<<(escape(K))/binary, "=", (escape(V))/binary>> || {K, V} <- Pairs],
     iolist_to_binary(lists:join(<<"&">>, Encoded)).
-
-trim_slash(Url) ->
-    case binary:last(Url) of
-        $/ -> binary:part(Url, 0, byte_size(Url) - 1);
-        _ -> Url
-    end.
 
 %% Percent-encodes everything outside the unreserved set. IPv6 colons are escaped
 %% along with the rest, which the API accepts, so one encoder covers both

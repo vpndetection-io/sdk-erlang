@@ -557,3 +557,98 @@ my_entitlement_surfaces_an_unauthorized_key_test() ->
 
     ?assertMatch({error, #{kind := unauthorized}}, vpndetection:my_entitlement(Client)),
     vpndetection_stub:stop(Stub).
+
+-define(INVALID_TIMEOUTS, [0, -1, 1.5, foo, 4294967296, 1 bsl 64]).
+
+%% httpc fails every call at once on zero, runs one with no bound on a value it
+%% ignores, and raises past 2^32 - 1 ms, so none of them may build a client.
+a_timeout_out_of_range_is_refused_by_new_test() ->
+    [?assertError({badarg, {timeout_ms, V}}, vpndetection:new(#{timeout_ms => V, cache => false}))
+     || V <- ?INVALID_TIMEOUTS],
+    [?assertMatch(#{timeout_ms := V}, vpndetection:new(#{timeout_ms => V, cache => false}))
+     || V <- [1, 4294967295, infinity]].
+
+%% Every path appended starts with `/', so a slash left on the base URL doubles
+%% into `//...', which is another path, and a second or third doubles too.
+a_trailing_slash_on_the_base_url_never_doubles_into_the_path_test_() ->
+    [{"base_url ending " ++ lists:duplicate(N, $/), fun() -> assert_slashes_dropped(N) end}
+     || N <- [1, 2, 3]].
+
+assert_slashes_dropped(N) ->
+    Parent = self(),
+    Recording = fun(#{url := Url}) ->
+        Parent ! {slash_requested, Url},
+        {ok, #{status => 404, headers => [], body => <<"{}">>}}
+    end,
+    Base = <<"https://h.example">>,
+    Client = vpndetection:new(#{base_url => <<Base/binary, (binary:copy(<<"/">>, N))/binary>>,
+                                http => Recording, cache => false}),
+
+    _ = vpndetection:lookup(Client, <<"8.8.8.8">>),
+    _ = vpndetection:database_downloads(Client),
+    _ = vpndetection:oauth_metadata(Client),
+    _ = vpndetection:oauth_device_authorization(Client, <<"cli">>),
+
+    ?assertEqual([<<Base/binary, "/8.8.8.8">>,
+                  <<Base/binary, "/api/v1/database/downloads">>,
+                  <<Base/binary, "/.well-known/oauth-authorization-server">>,
+                  <<Base/binary, "/oauth/device_authorization">>],
+                 slash_requested([])).
+
+slash_requested(Acc) ->
+    receive
+        {slash_requested, Url} -> slash_requested([Url | Acc])
+    after 0 ->
+        lists:reverse(Acc)
+    end.
+
+%% A per-call bound httpc cannot wait on is refused as well, before it costs a
+%% request, on every call that takes one.
+a_per_call_timeout_out_of_range_is_refused_before_any_request_test() ->
+    Stub = vpndetection_stub:start(routes([<<"1.1.1.1">>])),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), cache => false}),
+    Calls = [
+        {lookup, fun(O) -> vpndetection:lookup(Client, <<"1.1.1.1">>, O) end},
+        {my_ip, fun(O) -> vpndetection:my_ip(Client, O) end},
+        {my_entitlement, fun(O) -> vpndetection:my_entitlement(Client, O) end},
+        {database_downloads, fun(O) -> vpndetection:database_downloads(Client, O) end},
+        {lookup_batch, fun(O) ->
+            #{<<"1.1.1.1">> := Answer} = vpndetection:lookup_batch(Client, [<<"1.1.1.1">>], O),
+            Answer
+        end}
+    ],
+    [?assertMatch({Name, V, {error, #{kind := bad_request, retryable := false}}},
+                  {Name, V, Call(#{timeout_ms => V})})
+     || {Name, Call} <- Calls, V <- ?INVALID_TIMEOUTS],
+    ?assertEqual(0, vpndetection_stub:calls(Stub)),
+    vpndetection_stub:stop(Stub).
+
+%% Waited out as given, each of these would hold the call for weeks or for ever;
+%% past ~24.8 days the client's own backoff is used instead, still a throttle.
+a_retry_after_past_the_bound_is_waited_out_on_the_backoff_test_() ->
+    [{binary_to_list(RetryAfter), fun() -> assert_backoff_used(RetryAfter) end}
+     || RetryAfter <- [<<"2147484">>, <<"9223372036854775807">>, <<"Fri, 31 Dec 9999 23:59:59 GMT">>]].
+
+%% The first answer throttles and the second serves. The call runs in a process
+%% killed after 3 s, so a wait as long as the header fails rather than hangs.
+assert_backoff_used(RetryAfter) ->
+    Served = counters:new(1, []),
+    Http = fun(_Request) ->
+        counters:add(Served, 1, 1),
+        case counters:get(Served, 1) of
+            1 -> {ok, #{status => 429, headers => [{<<"retry-after">>, RetryAfter}], body => <<>>}};
+            _ -> {ok, #{status => 200, headers => [], body => <<"{\"downloads\":[]}">>}}
+        end
+    end,
+    Client = vpndetection:new(#{api_key => <<"k">>, retries => 1, http => Http, cache => false}),
+    Parent = self(),
+    Caller = spawn(fun() -> Parent ! {self(), vpndetection:database_downloads(Client)} end),
+
+    Answer = receive
+        {Caller, Result} -> Result
+    after 3000 ->
+        exit(Caller, kill),
+        still_waiting_after_3s
+    end,
+
+    ?assertEqual({{ok, []}, 2}, {Answer, counters:get(Served, 1)}).

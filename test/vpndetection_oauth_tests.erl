@@ -196,6 +196,33 @@ a_2xx_that_is_not_its_type_is_an_ordinary_server_error_test_() ->
          end || Answer <- Answers]
     end}.
 
+-define(INVALID_TIMEOUTS, [0, -1, 1.5, foo, 4294967296, 1 bsl 64]).
+
+%% httpc would fail the exchange at once, run it unbounded, or raise, so each is
+%% refused as `bad_request' before any request and, by the poll, before a wait.
+a_per_call_timeout_out_of_range_is_refused_before_any_request_or_wait_test_() ->
+    {timeout, 60, fun() ->
+        {Origin, Client} = keyless([]),
+        {Clock, Fake} = fake_clock(),
+        [#{<<"device">> := Device} | _] = cases(<<"poll">>),
+        Calls = [
+            {metadata, fun(Options) -> vpndetection:oauth_metadata(Client, Options) end},
+            {revoke, fun(Options) ->
+                vpndetection:oauth_revoke(Client, ?CLIENT_ID, <<"mo_rt_x">>, Options)
+            end},
+            {poll_device_token, fun(Options) ->
+                Polled = Options#{clock => Fake},
+                vpndetection:oauth_poll_device_token(Client, ?CLIENT_ID, device(Device), Polled)
+            end}
+        ],
+        [?assertMatch({Name, V, {error, #{kind := bad_request, retryable := false}}},
+                      {Name, V, bounded(fun() -> Call(#{timeout_ms => V}) end)})
+         || {Name, Call} <- Calls, V <- ?INVALID_TIMEOUTS],
+        ?assertEqual([], vpndetection_oauth_origin:requests(Origin)),
+        ?assertEqual([], waits(Clock)),
+        vpndetection_oauth_origin:stop(Origin)
+    end}.
+
 %% No corpus case: every response there decodes. One member left out per case,
 %% since a body missing several at once passes against a decoder that defaults
 %% any single one of them.

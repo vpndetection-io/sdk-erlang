@@ -34,6 +34,9 @@
 -define(DEFAULT_CACHE_MAX, 10000).
 -define(DEFAULT_CACHE_TTL_MS, 3600000).
 -define(DEFAULT_TIMEOUT_MS, 30000).
+%% The longest `timeout_ms' the transport can wait on: httpc's timer and a
+%% `receive ... after' both raise `timeout_value' past 2^32 - 1 ms (~49.7 days).
+-define(MAX_TIMEOUT_MS, 4294967295).
 -define(BATCH_TAG, '$vpndetection_batch').
 %% The most addresses POST /batch takes in one call; a larger batch is sent in
 %% chunks of this size.
@@ -45,7 +48,7 @@
     cache := vpndetection_cache:cache() | undefined,
     concurrency := pos_integer(),
     retries := non_neg_integer(),
-    timeout_ms := pos_integer(),
+    timeout_ms := pos_integer() | infinity,
     user_agent := binary(),
     http := vpndetection_http:http_fun()
 }.
@@ -56,22 +59,22 @@
     cache => #{max => pos_integer(), ttl_ms => pos_integer()} | false,
     concurrency => pos_integer(),
     retries => non_neg_integer(),
-    timeout_ms => pos_integer(),
+    timeout_ms => pos_integer() | infinity,
     http => vpndetection_http:http_fun()
 }.
 
--type lookup_options() :: #{retries => non_neg_integer(), timeout_ms => pos_integer()}.
+-type lookup_options() :: #{retries => non_neg_integer(), timeout_ms => pos_integer() | infinity}.
 -type batch_options() :: #{retries => non_neg_integer(), concurrency => pos_integer(),
-                           timeout_ms => pos_integer()}.
--type downloads_options() :: #{limit => pos_integer(), timeout_ms => pos_integer()}.
+                           timeout_ms => pos_integer() | infinity}.
+-type downloads_options() :: #{limit => pos_integer(), timeout_ms => pos_integer() | infinity}.
 -type format() :: csvgz | mmdb.
 %% The same set at runtime, because `format()' checks nothing once compiled.
 -define(FORMATS, [csvgz, mmdb]).
 
--type oauth_options() :: #{timeout_ms => pos_integer()}.
+-type oauth_options() :: #{timeout_ms => pos_integer() | infinity}.
 -type device_authorization_options() :: #{scope => binary() | string(),
                                           resource => binary() | string(),
-                                          timeout_ms => pos_integer()}.
+                                          timeout_ms => pos_integer() | infinity}.
 
 -spec new() -> client().
 new() ->
@@ -88,17 +91,22 @@ new() ->
 %% clients somewhere long lived and `close/1' them when you are done.
 -spec new(options()) -> client().
 new(Options) ->
+    TimeoutMs = maps:get(timeout_ms, Options, ?DEFAULT_TIMEOUT_MS),
+    case valid_timeout(TimeoutMs) of
+        true -> ok;
+        false -> erlang:error({badarg, {timeout_ms, TimeoutMs}})
+    end,
     case maps:is_key(http, Options) of
         false -> vpndetection_http:ensure_ready();
         true -> ok
     end,
     #{
-        base_url => bin(maps:get(base_url, Options, ?DEFAULT_BASE_URL)),
+        base_url => trim_slashes(bin(maps:get(base_url, Options, ?DEFAULT_BASE_URL))),
         api_key => api_key(Options),
         cache => cache(maps:get(cache, Options, #{})),
         concurrency => maps:get(concurrency, Options, ?DEFAULT_CONCURRENCY),
         retries => maps:get(retries, Options, ?DEFAULT_RETRIES),
-        timeout_ms => maps:get(timeout_ms, Options, ?DEFAULT_TIMEOUT_MS),
+        timeout_ms => TimeoutMs,
         user_agent => user_agent(),
         http => maps:get(http, Options, vpndetection_http:httpc_fun())
     }.
@@ -141,11 +149,13 @@ lookup(Client, Ip) ->
 -spec lookup(client(), binary() | string(), lookup_options()) ->
     {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}.
 lookup(Client, Ip, Options) ->
-    Addr = bin(Ip),
-    case vpndetection_bogon:is_bogon(Addr) of
-        true -> {ok, vpndetection_result:bogon(Addr)};
-        false -> served(Client, Addr, Options)
-    end.
+    checked(Options, fun() ->
+        Addr = bin(Ip),
+        case vpndetection_bogon:is_bogon(Addr) of
+            true -> {ok, vpndetection_result:bogon(Addr)};
+            false -> served(Client, Addr, Options)
+        end
+    end).
 
 -spec my_ip(client()) ->
     {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}.
@@ -165,11 +175,13 @@ my_ip(Client) ->
 -spec my_ip(client(), lookup_options()) ->
     {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}.
 my_ip(Client, Options) ->
-    Retries = maps:get(retries, Options, maps:get(retries, Client)),
-    case vpndetection_http:get_json(bound(Client, Options), <<"/myip">>, [], Retries) of
-        {ok, Body} -> {ok, vpndetection_result:from_wire(Body)};
-        {error, Error} -> {error, Error}
-    end.
+    checked(Options, fun() ->
+        Retries = maps:get(retries, Options, maps:get(retries, Client)),
+        case vpndetection_http:get_json(bound(Client, Options), <<"/myip">>, [], Retries) of
+            {ok, Body} -> {ok, vpndetection_result:from_wire(Body)};
+            {error, Error} -> {error, Error}
+        end
+    end).
 
 -spec my_entitlement(client()) -> {ok, map()} | {error, vpndetection_error:error()}.
 my_entitlement(Client) ->
@@ -194,8 +206,10 @@ my_entitlement(Client) ->
 -spec my_entitlement(client(), lookup_options()) ->
     {ok, map()} | {error, vpndetection_error:error()}.
 my_entitlement(Client, Options) ->
-    Retries = maps:get(retries, Options, maps:get(retries, Client)),
-    vpndetection_http:get_json(bound(Client, Options), <<"/api/v1/entitlement">>, [], Retries).
+    checked(Options, fun() ->
+        Retries = maps:get(retries, Options, maps:get(retries, Client)),
+        vpndetection_http:get_json(bound(Client, Options), <<"/api/v1/entitlement">>, [], Retries)
+    end).
 
 -spec lookup_batch(client(), [binary() | string()]) ->
     #{binary() => {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}}.
@@ -222,12 +236,15 @@ lookup_batch(Client, Ips) ->
     #{binary() => {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}}.
 lookup_batch(Client, Ips, Options) ->
     Unique = lists:uniq([bin(Ip) || Ip <- Ips]),
-    case maps:get(concurrency, Options, maps:get(concurrency, Client)) of
-        Concurrency when is_integer(Concurrency), Concurrency >= 1 ->
+    case {maps:get(concurrency, Options, maps:get(concurrency, Client)), check_timeout(Options)} of
+        %% A timeout no attempt can meet fails every address the same way, before any request.
+        {_, {error, Error}} ->
+            maps:from_list([{Ip, {error, Error}} || Ip <- Unique]);
+        {Concurrency, ok} when is_integer(Concurrency), Concurrency >= 1 ->
             batch(Client, Unique, Options, Concurrency);
         %% A dispatcher that may run nothing waits for ever, so this is the
         %% caller's mistake to hear about at once.
-        Refused ->
+        {Refused, ok} ->
             Message = iolist_to_binary(io_lib:format("concurrency must be at least 1, not ~p", [Refused])),
             Error = #{kind => bad_request, retryable => false, message => Message},
             maps:from_list([{Ip, {error, Error}} || Ip <- Unique])
@@ -302,8 +319,10 @@ database_downloads(Client, Options) ->
         {ok, Limit} -> [{<<"limit">>, integer_to_binary(Limit)}];
         error -> []
     end,
-    unwrap(get_json(bound(Client, Options), <<"/api/v1/database/downloads">>, Query),
-           <<"downloads">>).
+    checked(Options, fun() ->
+        unwrap(get_json(bound(Client, Options), <<"/api/v1/database/downloads">>, Query),
+               <<"downloads">>)
+    end).
 
 %% @doc The time-limited URL for one dataset file.
 %%
@@ -372,7 +391,7 @@ oauth_metadata(Client) ->
 -spec oauth_metadata(client(), oauth_options()) ->
     {ok, vpndetection_oauth:metadata()} | {error, vpndetection_error:error()}.
 oauth_metadata(Client, Options) ->
-    vpndetection_oauth:metadata(Client, Options).
+    checked(Options, fun() -> vpndetection_oauth:metadata(Client, Options) end).
 
 -spec oauth_device_authorization(client(), binary() | string()) ->
     {ok, vpndetection_oauth:device_authorization()} | {error, vpndetection_error:error()}.
@@ -390,7 +409,7 @@ oauth_device_authorization(Client, ClientId) ->
 oauth_device_authorization(Client, ClientId, Options) ->
     Extra = [{atom_to_binary(Name), bin(Value)} || Name <- [scope, resource],
                                                    {ok, Value} <- [maps:find(Name, Options)]],
-    vpndetection_oauth:device_authorization(Client, bin(ClientId), Extra, Options).
+    checked(Options, fun() -> vpndetection_oauth:device_authorization(Client, bin(ClientId), Extra, Options) end).
 
 -spec oauth_exchange_device_code(client(), binary() | string(), binary() | string()) ->
     {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
@@ -407,7 +426,7 @@ oauth_exchange_device_code(Client, ClientId, DeviceCode) ->
 -spec oauth_exchange_device_code(client(), binary() | string(), binary() | string(), oauth_options()) ->
     {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
 oauth_exchange_device_code(Client, ClientId, DeviceCode, Options) ->
-    vpndetection_oauth:exchange_device_code(Client, bin(ClientId), bin(DeviceCode), Options).
+    checked(Options, fun() -> vpndetection_oauth:exchange_device_code(Client, bin(ClientId), bin(DeviceCode), Options) end).
 
 -spec oauth_exchange_refresh_token(client(), binary() | string(), binary() | string()) ->
     {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
@@ -421,7 +440,9 @@ oauth_exchange_refresh_token(Client, ClientId, RefreshToken) ->
                                    oauth_options()) ->
     {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
 oauth_exchange_refresh_token(Client, ClientId, RefreshToken, Options) ->
-    vpndetection_oauth:exchange_refresh_token(Client, bin(ClientId), bin(RefreshToken), Options).
+    checked(Options, fun() ->
+        vpndetection_oauth:exchange_refresh_token(Client, bin(ClientId), bin(RefreshToken), Options)
+    end).
 
 -spec oauth_revoke(client(), binary() | string(), binary() | string()) ->
     ok | {error, vpndetection_error:error()}.
@@ -433,7 +454,7 @@ oauth_revoke(Client, ClientId, Token) ->
 -spec oauth_revoke(client(), binary() | string(), binary() | string(), oauth_options()) ->
     ok | {error, vpndetection_error:error()}.
 oauth_revoke(Client, ClientId, Token, Options) ->
-    vpndetection_oauth:revoke(Client, bin(ClientId), bin(Token), Options).
+    checked(Options, fun() -> vpndetection_oauth:revoke(Client, bin(ClientId), bin(Token), Options) end).
 
 -spec oauth_poll_device_token(client(), binary() | string(), vpndetection_oauth:device_authorization()) ->
     {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
@@ -456,7 +477,7 @@ oauth_poll_device_token(Client, ClientId, Device) ->
                               oauth_options()) ->
     {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
 oauth_poll_device_token(Client, ClientId, Device, Options) ->
-    vpndetection_oauth:poll_device_token(Client, bin(ClientId), Device, Options).
+    checked(Options, fun() -> vpndetection_oauth:poll_device_token(Client, bin(ClientId), Device, Options) end).
 
 to_file(Client, Id, Format, Dest, Partial, Fd) ->
     Sink = #{acc => Fd, fold => fun(Chunk, Handle) ->
@@ -631,6 +652,40 @@ get_json(Client, Path, Query) ->
 %% the transport reads for every request it builds.
 bound(Client, Options) ->
     Client#{timeout_ms := maps:get(timeout_ms, Options, maps:get(timeout_ms, Client))}.
+
+%% A call with a timeout no attempt can meet is refused before any request:
+%% httpc fails a call at once on zero, runs it with no bound on a value it
+%% ignores, and raises in the caller past ?MAX_TIMEOUT_MS.
+checked(Options, Call) ->
+    case check_timeout(Options) of
+        ok -> Call();
+        {error, Error} -> {error, Error}
+    end.
+
+check_timeout(#{timeout_ms := TimeoutMs}) ->
+    case valid_timeout(TimeoutMs) of
+        true ->
+            ok;
+        false ->
+            Message = io_lib:format("timeout_ms must be infinity or an integer from 1 to ~b, not ~p",
+                                    [?MAX_TIMEOUT_MS, TimeoutMs]),
+            {error, #{kind => bad_request, retryable => false, message => iolist_to_binary(Message)}}
+    end;
+check_timeout(_Options) ->
+    ok.
+
+valid_timeout(infinity) -> true;
+valid_timeout(Ms) -> is_integer(Ms) andalso Ms >= 1 andalso Ms =< ?MAX_TIMEOUT_MS.
+
+%% Every one, not only the last: each path appended starts with its own `/', and
+%% `//api/...' is another path, one the API answers with a redirect.
+trim_slashes(<<>>) ->
+    <<>>;
+trim_slashes(Url) ->
+    case binary:last(Url) of
+        $/ -> trim_slashes(binary:part(Url, 0, byte_size(Url) - 1));
+        _ -> Url
+    end.
 
 %% An unpublished format is refused here rather than sent, where it would cost a
 %% round trip and come back a 400 naming nothing the caller can act on.

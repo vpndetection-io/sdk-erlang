@@ -125,7 +125,9 @@ revoke(Client, ClientId, Token, Options) ->
 %% Waits the interval BEFORE every exchange, the first included, so the server's
 %% gap between two polls is never shorter than it. A `slow_down' widens the wait
 %% by five seconds for the rest of the call; any answer but that and
-%% `authorization_pending' ends it.
+%% `authorization_pending' ends it. Every wait ends at the local deadline at the
+%% latest, so an interval longer than the time left sleeps only until the deadline
+%% and the local expiry follows with no request sent.
 -spec poll_device_token(map(), binary(), device_authorization(), map()) ->
     {ok, token_response()} | {error, vpndetection_error:error()}.
 poll_device_token(Client, ClientId, #{device_code := Code, expires_in := ExpiresIn} = Device, Options) ->
@@ -134,7 +136,7 @@ poll_device_token(Client, ClientId, #{device_code := Code, expires_in := Expires
     poll(Client, ClientId, Code, Options, {Wait, Now, Deadline}, first_interval(Device)).
 
 poll(Client, ClientId, Code, Options, {Wait, Now, Deadline} = Clock, Interval) ->
-    Wait(Interval * 1000),
+    Wait(min(Interval * 1000, max(Deadline - Now(), 0))),
     case Now() >= Deadline of
         true ->
             {error, vpndetection_error:local_expiry()};

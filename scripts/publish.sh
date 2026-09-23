@@ -37,7 +37,9 @@ fi
 
 # The working tree is mounted READ ONLY and copied inside, so _build, the hex
 # cache and root-owned artifacts stay in the container rather than landing in
-# the repo.
+# the repo. Any _build that DID land in the repo is dropped from the copy, as
+# scripts/test.sh does: rebar3 keeps its beams rather than rebuilding, and the
+# suite then passes or fails against code that is no longer there.
 docker run --rm \
     -v "$PWD:/src:ro" \
     -e HOME=/tmp \
@@ -46,6 +48,7 @@ docker run --rm \
     "$OTP_IMAGE" sh -euc "
         cp -R /src /w
         cd /w
+        rm -rf _build
         rebar3 eunit
         rebar3 as publish hex publish --repo hexpm ${publish_args}
     "

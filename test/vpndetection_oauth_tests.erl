@@ -196,6 +196,36 @@ a_2xx_that_is_not_its_type_is_an_ordinary_server_error_test_() ->
          end || Answer <- Answers]
     end}.
 
+%% No corpus case: every response there decodes. One member left out per case,
+%% since a body missing several at once passes against a decoder that defaults
+%% any single one of them.
+an_answer_missing_any_one_required_member_is_an_ordinary_server_error_test_() ->
+    {timeout, 60, fun() ->
+        Responses = oauth(<<"responses">>),
+        Every = lists:foldl(fun(Type, Acc) ->
+            [#{<<"body">> := Body} | _] = maps:get(Type, Responses),
+            maps:merge(Acc, Body)
+        end, #{}, [<<"metadata">>, <<"deviceAuthorization">>, <<"token">>]),
+        Required = [
+            {<<"metadata">>, [<<"issuer">>, <<"authorization_endpoint">>, <<"token_endpoint">>]},
+            {<<"deviceAuthorization">>, [<<"device_code">>, <<"user_code">>, <<"verification_uri">>,
+                                         <<"expires_in">>, <<"interval">>]},
+            {<<"exchangeDeviceCode">>, [<<"access_token">>, <<"token_type">>, <<"expires_in">>]}
+        ],
+        Args = #{<<"clientId">> => ?CLIENT_ID, <<"deviceCode">> => <<"mo_dc_x">>},
+        [begin
+             {Origin, Client} = keyless([#{<<"status">> => 200, <<"body">> => maps:remove(Member, Every)}]),
+             Outcome = bounded(fun() -> call(Client, Operation, Args) end),
+             ?assertEqual({Operation, Member, 1},
+                          {Operation, Member, length(vpndetection_oauth_origin:requests(Origin))}),
+             ?assertMatch({Operation, Member, {error, #{kind := server_error, status := 200}}},
+                          {Operation, Member, Outcome}),
+             {error, Error} = Outcome,
+             ?assertNot(maps:is_key(error_code, Error)),
+             vpndetection_oauth_origin:stop(Origin)
+         end || {Operation, Members} <- Required, Member <- Members]
+    end}.
+
 %% Against an origin that stalls past both bounds, each function's own 300 ms
 %% fires rather than the client's 4 s. The poll's bounds its exchange.
 every_oauth_function_takes_a_per_call_timeout_test_() ->

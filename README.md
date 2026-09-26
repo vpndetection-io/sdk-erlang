@@ -1,4 +1,4 @@
-# [<img src="https://s3.vpndetection.io/vpndetection-public/brand/mark.svg" alt="VPNDetection" width="24"/>](https://vpndetection.io/) VPNDetection Erlang Client Library
+# [<img src="https://s3.vpndetection.io/vpndetection-public/brand/mark.svg" alt="VPNDetection" height="28"/>](https://vpndetection.io/) VPNDetection Erlang Client Library
 
 [![hex.pm](https://img.shields.io/hexpm/v/vpndetection.svg)](https://hex.pm/packages/vpndetection)
 [![license](https://img.shields.io/hexpm/l/vpndetection.svg)](LICENSE)

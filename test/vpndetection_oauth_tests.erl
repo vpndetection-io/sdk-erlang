@@ -12,8 +12,6 @@
 -define(CLIENT_ID, <<"vpndetection-cli">>).
 -define(BOUND_MS, 15000).
 -define(WAIT_CAP, 30).
-%% The corpus's metadata document still names a member the published spec dropped.
--define(NOT_IN_SPEC, [<<"client_id_metadata_document_supported">>]).
 
 each_operation_requests_its_own_method_and_path_test_() ->
     {timeout, 60, fun() ->
@@ -69,7 +67,7 @@ every_corpus_response_decodes_with_absent_left_absent_test_() ->
              {ok, Answer} = bounded(fun() -> Call(Client) end),
              #{<<"present">> := Present, <<"absent">> := Absent} = Expect,
              [?assertEqual({Name, Member, Value}, {Name, Member, maps:get(atom(Member), Answer, missing)})
-              || Member := Value <- Present, not lists:member(Member, ?NOT_IN_SPEC)],
+              || Member := Value <- Present],
              [?assertEqual({Name, Member, error}, {Name, Member, maps:find(atom(Member), Answer)})
               || Member <- Absent],
              vpndetection_oauth_origin:stop(Origin)

@@ -23,6 +23,7 @@
     code_challenge_methods_supported => [binary()],
     token_endpoint_auth_methods_supported => [binary()],
     authorization_response_iss_parameter_supported => boolean(),
+    client_id_metadata_document_supported => boolean(),
     service_documentation => binary()
 }.
 
@@ -61,6 +62,7 @@
     {<<"token_endpoint_auth_methods_supported">>, token_endpoint_auth_methods_supported, strings, false},
     {<<"authorization_response_iss_parameter_supported">>, authorization_response_iss_parameter_supported,
      boolean, false},
+    {<<"client_id_metadata_document_supported">>, client_id_metadata_document_supported, boolean, false},
     {<<"service_documentation">>, service_documentation, string, false}
 ]).
 -define(DEVICE_AUTHORIZATION, [

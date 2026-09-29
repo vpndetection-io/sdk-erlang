@@ -12,6 +12,62 @@ is_bogon_test_() ->
       ?_assertEqual(Expect, vpndetection:is_bogon(Ip))}
      || #{<<"ip">> := Ip, <<"expect">> := Expect, <<"why">> := Why} <- corpus(<<"isBogon">>)].
 
+%% A server listening on :: sees every IPv4 visitor as ::ffff:a.b.c.d. Read
+%% whole that is inside ::ffff:0:0/96, so an SDK that did not unmap answered
+%% each one locally as a bogon and never asked.
+an_ipv4_mapped_address_is_the_ipv4_address_it_carries_test_() ->
+    [{binary_to_list(Ip), fun() -> assert_mapped(C) end}
+     || #{<<"ip">> := Ip} = C <- corpus(<<"ipv4Mapped">>)].
+
+assert_mapped(#{<<"ip">> := Ip, <<"carries">> := Carries, <<"expect">> := Expect}) ->
+    ?assertEqual(Expect, vpndetection:is_bogon(Ip)),
+    Stub = vpndetection_stub:start(#{
+        Carries => #{body => #{<<"ip">> => Carries, <<"is_vpn">> => true}}
+    }),
+    Self = self(),
+    Http = fun(Request) ->
+        Self ! {sent, maps:get(body, Request, <<>>)},
+        (vpndetection_stub:http(Stub))(Request)
+    end,
+    Client = vpndetection:new(#{http => Http, retries => 0}),
+    {ok, Result} = vpndetection:lookup(Client, Ip),
+    ?assertEqual(Carries, maps:get(ip, Result)),
+    case Expect of
+        true ->
+            ?assertMatch(#{is_bogon := true}, Result),
+            ?assertEqual(0, vpndetection_stub:calls(Stub));
+        false ->
+            ?assertEqual(1, vpndetection_stub:calls(Stub)),
+            {ok, _} = vpndetection:lookup(Client, Carries),
+            ?assertEqual(1, vpndetection_stub:calls(Stub)),
+            %% The mapped form alone: asked beside its plain form, a batch that
+            %% sent the address as given would still have been answered for it.
+            flush_sent(),
+            Batch = vpndetection:new(#{http => Http, retries => 0}),
+            Got = vpndetection:lookup_batch(Batch, [Ip]),
+            ?assertEqual([Ip], maps:keys(Got)),
+            ?assertMatch({ok, #{ip := Carries}}, maps:get(Ip, Got)),
+            ?assertEqual([Carries], sent_ips()),
+            vpndetection:close(Batch)
+    end,
+    vpndetection:close(Client),
+    vpndetection_stub:stop(Stub).
+
+flush_sent() ->
+    receive {sent, _} -> flush_sent() after 0 -> ok end.
+
+%% The addresses every POST /batch since the flush carried; a GET has no body.
+sent_ips() ->
+    receive
+        {sent, Body} ->
+            case iolist_to_binary(Body) of
+                <<>> -> sent_ips();
+                Json -> maps:get(<<"ips">>, json:decode(Json)) ++ sent_ips()
+            end
+    after 0 ->
+        []
+    end.
+
 bogon_is_answered_locally_in_the_full_max_shape_test() ->
     Stub = vpndetection_stub:start(#{}),
     Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), cache => false}),

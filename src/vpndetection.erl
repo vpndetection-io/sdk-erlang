@@ -150,7 +150,8 @@ lookup(Client, Ip) ->
     {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}.
 lookup(Client, Ip, Options) ->
     checked(Options, fun() ->
-        Addr = bin(Ip),
+        %% Judged, cached and sent as the IPv4 address it carries, if it is mapped.
+        Addr = vpndetection_bogon:unmapped(bin(Ip)),
         case vpndetection_bogon:is_bogon(Addr) of
             true -> {ok, vpndetection_result:bogon(Addr)};
             false -> served(Client, Addr, Options)
@@ -235,19 +236,23 @@ lookup_batch(Client, Ips) ->
 -spec lookup_batch(client(), [binary() | string()], batch_options()) ->
     #{binary() => {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}}.
 lookup_batch(Client, Ips, Options) ->
-    Unique = lists:uniq([bin(Ip) || Ip <- Ips]),
+    Asked = lists:uniq([bin(Ip) || Ip <- Ips]),
+    %% An IPv4-mapped address is sent as the address it carries, once however
+    %% many of its spellings were asked, and answered under each one asked.
+    Unique = lists:uniq([vpndetection_bogon:unmapped(Ip) || Ip <- Asked]),
     case {maps:get(concurrency, Options, maps:get(concurrency, Client)), check_timeout(Options)} of
         %% A timeout no attempt can meet fails every address the same way, before any request.
         {_, {error, Error}} ->
-            maps:from_list([{Ip, {error, Error}} || Ip <- Unique]);
+            maps:from_list([{Ip, {error, Error}} || Ip <- Asked]);
         {Concurrency, ok} when is_integer(Concurrency), Concurrency >= 1 ->
-            batch(Client, Unique, Options, Concurrency);
+            Answers = batch(Client, Unique, Options, Concurrency),
+            maps:from_list([{Ip, maps:get(vpndetection_bogon:unmapped(Ip), Answers)} || Ip <- Asked]);
         %% A dispatcher that may run nothing waits for ever, so this is the
         %% caller's mistake to hear about at once.
         {Refused, ok} ->
             Message = iolist_to_binary(io_lib:format("concurrency must be at least 1, not ~p", [Refused])),
             Error = #{kind => bad_request, retryable => false, message => Message},
-            maps:from_list([{Ip, {error, Error}} || Ip <- Unique])
+            maps:from_list([{Ip, {error, Error}} || Ip <- Asked])
     end.
 
 %% @doc Every format a dataset file is published in: the values `format()' takes,

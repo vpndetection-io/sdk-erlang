@@ -1,7 +1,7 @@
 %% @doc Local classification of addresses that can never be VPN or proxy infrastructure.
 -module(vpndetection_bogon).
 
--export([is_bogon/1]).
+-export([is_bogon/1, unmapped/1]).
 
 -define(RANGES, {?MODULE, ranges}).
 
@@ -17,10 +17,9 @@ is_bogon(Ip) when is_binary(Ip) ->
     is_bogon(binary_to_list(Ip));
 is_bogon(Ip) when is_list(Ip) ->
     {V4, V6} = ranges(),
-    %% A v6 literal is matched against the v6 table only, so ::ffff:10.0.0.1 is
-    %% resolved by the v6 ::ffff:0:0/96 entry rather than by unmapping it to
-    %% 10.0.0.1 and consulting the v4 table. Every other SDK routes the same way.
+    %% An IPv4-mapped address is judged as the IPv4 address it carries.
     case inet:parse_address(Ip) of
+        {ok, {0, 0, 0, 0, 0, 16#ffff, Hi, Lo}} -> in_any(to_int(v4_of(Hi, Lo), 8), V4);
         {ok, Addr} when tuple_size(Addr) =:= 4 -> in_any(to_int(Addr, 8), V4);
         {ok, Addr} when tuple_size(Addr) =:= 8 -> in_any(to_int(Addr, 16), V6);
         {error, _} -> false
@@ -28,9 +27,26 @@ is_bogon(Ip) when is_list(Ip) ->
 is_bogon(_) ->
     false.
 
+%% @doc The IPv4 address an IPv4-mapped IPv6 address (`::ffff:a.b.c.d', in any
+%% spelling) carries, dotted, and any other address as given.
+%%
+%% A server listening on `::' sees every IPv4 visitor in that form, which read
+%% whole is inside `::ffff:0:0/96', so judging it whole would answer every such
+%% visitor locally as a bogon. `::a.b.c.d' is IPv4-compatible rather than
+%% mapped, and stays IPv6.
+-spec unmapped(binary()) -> binary().
+unmapped(Ip) when is_binary(Ip) ->
+    case binary:match(Ip, <<":">>) =/= nomatch andalso inet:parse_address(binary_to_list(Ip)) of
+        {ok, {0, 0, 0, 0, 0, 16#ffff, Hi, Lo}} -> list_to_binary(inet:ntoa(v4_of(Hi, Lo)));
+        _ -> Ip
+    end.
+
+v4_of(Hi, Lo) ->
+    {Hi bsr 8, Hi band 16#ff, Lo bsr 8, Lo band 16#ff}.
+
 %% The parsed table is derived from a compile-time constant and never changes,
 %% so it is computed once and read without copying thereafter. Parsing it on
-%% every call would re-walk 54 CIDRs to answer a question with a fixed answer.
+%% every call would re-walk 80 CIDRs to answer a question with a fixed answer.
 ranges() ->
     case persistent_term:get(?RANGES, undefined) of
         undefined ->

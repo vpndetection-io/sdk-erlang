@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.4.1 - 2026-09-29
+
+### Fixes
+
+- Judge an IPv4-mapped address as the IPv4 address it carries ([`0c429dd`](https://github.com/vpndetection-io/sdk-erlang/commit/0c429dd2b0927b07ec3f5da1d8c1714d98717fb3))
+- Recognize 26 more reserved ranges as bogons, as the API does ([`4c20b69`](https://github.com/vpndetection-io/sdk-erlang/commit/4c20b694950c669dab89797d1cd7b3c8857b1cda))
+
 ## 3.4.0 - 2026-09-27
 
 ### Features

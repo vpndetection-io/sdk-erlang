@@ -588,7 +588,8 @@ dispatch(Fun, Queue, Limit, Pending, Done, Acc) ->
     receive
         {?BATCH_TAG, Pid, Result} ->
             dispatch(Fun, Queue, Limit, Pending, Done#{Pid => Result}, Acc);
-        {'DOWN', _Mon, process, Pid, Reason} ->
+        %% Only a worker's: the caller's own monitors are not this batch's to consume.
+        {'DOWN', _Mon, process, Pid, Reason} when is_map_key(Pid, Pending) ->
             %% Signals between a pair of processes keep their order, so a result
             %% sent before the worker exited is already in Done by now.
             Item = maps:get(Pid, Pending),

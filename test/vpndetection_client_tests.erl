@@ -69,6 +69,20 @@ the_real_transport_honors_the_concurrency_bound_test_() ->
         vpndetection_origin:stop(Origin)
     end}.
 
+%% A batch waits on its own workers' monitors only. A process running one with a
+%% monitor of its own, as a gen_server often has, keeps that monitor's message.
+a_batch_leaves_the_callers_own_monitors_alone_test() ->
+    Stub = vpndetection_stub:start(routes(?ADDRS), 30),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), cache => false}),
+    {Pid, Monitor} = spawn_monitor(fun() -> ok end),
+    receive after 20 -> ok end,
+
+    Answers = vpndetection:lookup_batch(Client, [addr(0), addr(1)]),
+
+    ?assertMatch(#{<<"9.1.0.0">> := {ok, _}, <<"9.1.0.1">> := {ok, _}}, Answers),
+    ?assertEqual(kept, receive {'DOWN', Monitor, process, Pid, normal} -> kept after 0 -> lost end),
+    vpndetection_stub:stop(Stub).
+
 retries_are_configurable_per_call_test() ->
     Stub = vpndetection_stub:start(#{<<"9.9.9.9">> => #{status => 500,
                                                         body => #{<<"error">> => <<"lookup failed">>}}}),

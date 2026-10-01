@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.4.2 - 2026-10-01
+
+### Fixes
+
+- Share one request per address among concurrent lookups and batches ([`6356d42`](https://github.com/vpndetection-io/sdk-erlang/commit/6356d42c1fd243cbb33eb1a65bab4986601d8fca))
+- Leave the caller's own monitor messages alone during a batch ([`e27ec3b`](https://github.com/vpndetection-io/sdk-erlang/commit/e27ec3b6a99618bf02902d706aeaea13c1f8cdea))
+
 ## 3.4.1 - 2026-09-29
 
 ### Fixes

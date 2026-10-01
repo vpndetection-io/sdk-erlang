@@ -534,30 +534,59 @@ io_error(Path, Reason) ->
 message(Path, Reason) ->
     iolist_to_binary([Path, ": ", file:format_error(Reason)]).
 
-served(Client, Addr, Options) ->
-    case cached(Client, Addr) of
-        {ok, Result} ->
+%% Without a cache nothing is shared, since every lookup is then served.
+served(#{cache := undefined} = Client, Addr, Options) ->
+    fetch(Client, Addr, Options);
+served(#{cache := Cache} = Client, Addr, Options) ->
+    case vpndetection_cache:get(Cache, Addr) of
+        {ok, Result} -> {ok, Result};
+        miss -> shared(Client, Cache, Addr, Options)
+    end.
+
+%% Concurrent misses for one address share one request, a lookup's or the batch
+%% chunk carrying it: the first to board the address leads, under its own
+%% options, and every other caller awaits its answer. A leader that dies before
+%% answering sends its waiters back to ask again rather than failing them.
+shared(Client, Cache, Addr, Options) ->
+    Ref = make_ref(),
+    case vpndetection_cache:board(Cache, [Addr], Ref) of
+        [{Addr, {ok, Result}}] ->
             {ok, Result};
-        miss ->
-            Path = <<"/", (vpndetection_http:escape(Addr))/binary>>,
-            Retries = maps:get(retries, Options, maps:get(retries, Client)),
-            case vpndetection_http:get_json(bound(Client, Options), Path, [], Retries) of
-                {ok, Body} -> store(Client, Addr, vpndetection_result:from_wire(Body));
-                {error, Error} -> {error, Error}
+        [{Addr, lead}] ->
+            Answer = leading(Cache, [Addr], fun() -> fetch(Client, Addr, Options) end),
+            %% Errors are never cached: a 500 or a rate limit says nothing about the address.
+            vpndetection_cache:land(Cache, [{Addr, Answer}]),
+            Answer;
+        [{Addr, wait}] ->
+            case vpndetection_cache:await(Cache, Ref, [Addr]) of
+                #{Addr := retry} -> shared(Client, Cache, Addr, Options);
+                #{Addr := Answer} -> Answer
             end
+    end.
+
+%% Runs a leader's requests, taking what it leads off the board if they raise,
+%% so a caller that catches the exception cannot leave its waiters hanging.
+leading(Cache, Led, Send) ->
+    try
+        Send()
+    catch
+        Class:Reason:Stack ->
+            vpndetection_cache:abandon(Cache, Led),
+            erlang:raise(Class, Reason, Stack)
+    end.
+
+fetch(Client, Addr, Options) ->
+    Path = <<"/", (vpndetection_http:escape(Addr))/binary>>,
+    Retries = maps:get(retries, Options, maps:get(retries, Client)),
+    case vpndetection_http:get_json(bound(Client, Options), Path, [], Retries) of
+        {ok, Body} -> {ok, vpndetection_result:from_wire(Body)};
+        {error, Error} -> {error, Error}
     end.
 
 cached(#{cache := undefined}, _Addr) ->
     miss;
 cached(#{cache := Cache}, Addr) ->
     vpndetection_cache:get(Cache, Addr).
-
-%% Errors are never cached: a 500 or a rate limit says nothing about the address.
-store(#{cache := undefined}, _Addr, Result) ->
-    {ok, Result};
-store(#{cache := Cache}, Addr, Result) ->
-    vpndetection_cache:put(Cache, Addr, Result),
-    {ok, Result}.
 
 batch(Client, Unique, Options, Concurrency) ->
     {Answered, Pending} = lists:foldl(fun(Ip, {Acc, Rest}) ->
@@ -566,36 +595,64 @@ batch(Client, Unique, Options, Concurrency) ->
             miss -> {Acc, [Ip | Rest]}
         end
     end, {#{}, []}, Unique),
-    Chunks = chunk(lists:reverse(Pending), ?BATCH_MAX),
-    ByChunk = dispatch(fun(Chunk) -> lookup_chunk(Client, Chunk, Options) end,
-                       Chunks, Concurrency, #{}, #{}, #{}),
-    maps:fold(fun
-        (_Chunk, Answers, Acc) when is_map(Answers) -> maps:merge(Acc, Answers);
-        (Chunk, Error, Acc) -> maps:merge(Acc, maps:from_list([{Ip, Error} || Ip <- Chunk]))
-    end, Answered, ByChunk).
+    maps:merge(Answered, rounds(Client, lists:reverse(Pending), Options, Concurrency, #{})).
+
+%% Every address the batch must ask is boarded BEFORE its chunks are built: the
+%% ones it leads are sent, landing chunk by chunk, so a lookup arriving meanwhile
+%% awaits the chunk carrying its address; the ones a lookup already has in the
+%% air are awaited rather than sent again. An address whose leader died is
+%% boarded again in the next round.
+rounds(_Client, [], _Options, _Concurrency, Acc) ->
+    Acc;
+rounds(#{cache := undefined} = Client, Ips, Options, Concurrency, Acc) ->
+    maps:merge(Acc, send(Client, Ips, Options, Concurrency, fun(_Chunk, _Answers) -> ok end));
+rounds(#{cache := Cache} = Client, Ips, Options, Concurrency, Acc) ->
+    Ref = make_ref(),
+    Boarded = vpndetection_cache:board(Cache, Ips, Ref),
+    Hits = maps:from_list([{Ip, Hit} || {Ip, {ok, _} = Hit} <- Boarded]),
+    Led = [Ip || {Ip, lead} <- Boarded],
+    Land = fun(Chunk, Answers) -> vpndetection_cache:land(Cache, [{Ip, maps:get(Ip, Answers)} || Ip <- Chunk]) end,
+    Sent = leading(Cache, Led, fun() -> send(Client, Led, Options, Concurrency, Land) end),
+    Awaited = vpndetection_cache:await(Cache, Ref, [Ip || {Ip, wait} <- Boarded]),
+    {Again, Answers} = maps:fold(fun
+        (Ip, retry, {A, D}) -> {[Ip | A], D};
+        (Ip, Answer, {A, D}) -> {A, D#{Ip => Answer}}
+    end, {[], #{}}, Awaited),
+    rounds(Client, lists:reverse(Again), Options, Concurrency,
+           maps:merge(maps:merge(maps:merge(Acc, Hits), Sent), Answers)).
+
+%% The addresses sent as chunks, each chunk handed to `Land' as it completes.
+send(Client, Ips, Options, Concurrency, Land) ->
+    ByChunk = dispatch(fun(Chunk) -> lookup_chunk(Client, Chunk, Options) end, Land,
+                       chunk(Ips, ?BATCH_MAX), Concurrency, #{}, #{}, #{}),
+    maps:fold(fun(_Chunk, Answers, Acc) -> maps:merge(Acc, Answers) end, #{}, ByChunk).
 
 %% Bounded fan-out. At most `Limit' workers are alive at any moment, so the
 %% concurrency setting is the number of requests actually in flight rather than
 %% a hint. spawn_monitor rather than spawn, rather than waiting on results alone,
 %% so a worker that dies without answering cannot hang the batch.
-dispatch(Fun, [Item | Rest], Limit, Pending, Done, Acc) when map_size(Pending) < Limit ->
+dispatch(Fun, Land, [Item | Rest], Limit, Pending, Done, Acc) when map_size(Pending) < Limit ->
     Parent = self(),
     {Pid, _Mon} = spawn_monitor(fun() -> Parent ! {?BATCH_TAG, self(), Fun(Item)} end),
-    dispatch(Fun, Rest, Limit, Pending#{Pid => Item}, Done, Acc);
-dispatch(_Fun, [], _Limit, Pending, _Done, Acc) when map_size(Pending) =:= 0 ->
+    dispatch(Fun, Land, Rest, Limit, Pending#{Pid => Item}, Done, Acc);
+dispatch(_Fun, _Land, [], _Limit, Pending, _Done, Acc) when map_size(Pending) =:= 0 ->
     Acc;
-dispatch(Fun, Queue, Limit, Pending, Done, Acc) ->
+dispatch(Fun, Land, Queue, Limit, Pending, Done, Acc) ->
     receive
         {?BATCH_TAG, Pid, Result} ->
-            dispatch(Fun, Queue, Limit, Pending, Done#{Pid => Result}, Acc);
+            dispatch(Fun, Land, Queue, Limit, Pending, Done#{Pid => Result}, Acc);
         %% Only a worker's: the caller's own monitors are not this batch's to consume.
         {'DOWN', _Mon, process, Pid, Reason} when is_map_key(Pid, Pending) ->
             %% Signals between a pair of processes keep their order, so a result
             %% sent before the worker exited is already in Done by now.
             Item = maps:get(Pid, Pending),
-            Result = maps:get(Pid, Done, {error, worker_died(Reason)}),
-            dispatch(Fun, Queue, Limit, maps:remove(Pid, Pending), maps:remove(Pid, Done),
-                     Acc#{Item => Result})
+            Answers = case maps:find(Pid, Done) of
+                {ok, Result} -> Result;
+                error -> maps:from_list([{Ip, {error, worker_died(Reason)}} || Ip <- Item])
+            end,
+            Land(Item, Answers),
+            dispatch(Fun, Land, Queue, Limit, maps:remove(Pid, Pending), maps:remove(Pid, Done),
+                     Acc#{Item => Answers})
     end.
 
 worker_died(Reason) ->
@@ -628,7 +685,7 @@ lookup_chunk(Client, Chunk, Options) ->
         {ok, Answer} ->
             Results = object(maps:get(<<"results">>, Answer, #{})),
             Errors = object(maps:get(<<"errors">>, Answer, #{})),
-            maps:from_list([{Ip, batch_answer(Client, Ip, Results, Errors)} || Ip <- Chunk]);
+            maps:from_list([{Ip, batch_answer(Ip, Results, Errors)} || Ip <- Chunk]);
         {error, Error} ->
             maps:from_list([{Ip, {error, Error}} || Ip <- Chunk])
     end.
@@ -639,10 +696,10 @@ object(_) -> #{}.
 %% Every address lands in exactly one of `results' and `errors'; an address in
 %% neither is the server breaking its own contract, and is reported as such
 %% rather than lost.
-batch_answer(Client, Ip, Results, Errors) ->
+batch_answer(Ip, Results, Errors) ->
     case {Results, Errors} of
         {#{Ip := Served}, _} when is_map(Served) ->
-            store(Client, Ip, vpndetection_result:from_wire(Served));
+            {ok, vpndetection_result:from_wire(Served)};
         {_, #{Ip := #{<<"status">> := Status, <<"error">> := Message}}}
           when is_integer(Status), is_binary(Message) ->
             {error, vpndetection_error:from_entry(Status, Message)};

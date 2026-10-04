@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.4.3 - 2026-10-04
+
+### Fixes
+
+- Re-pin the spec to 2026.10.03: metadata needs no license ([`839d50b`](https://github.com/vpndetection-io/sdk-erlang/commit/839d50bba4ad923b1faca548ae05a40b63caf114))
+
 ## 3.4.2 - 2026-10-01
 
 ### Fixes

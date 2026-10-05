@@ -14,7 +14,7 @@ The library helps you query VPNDetection's APIs for anonymity detection includin
 {deps, [vpndetection]}.
 ```
 
-Requires Erlang/OTP 27 or newer. There are no runtime dependencies: everything the client needs is in OTP. From Elixir, add `{:vpndetection, "~> 3.4"}` to your `mix.exs` deps and call it as `:vpndetection`.
+Requires Erlang/OTP 27 or newer. There are no runtime dependencies: everything the client needs is in OTP. From Elixir, add `{:vpndetection, "~> 3.5"}` to your `mix.exs` deps and call it as `:vpndetection`.
 
 ## Usage
 

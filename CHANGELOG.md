@@ -2,6 +2,16 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.5.0 - 2026-10-05
+
+### Features
+
+- Add the authorization code sign-in, with PKCE ([`23f8da8`](https://github.com/vpndetection-io/sdk-erlang/commit/23f8da89d197f8613b34b12cea9ea7c6332380e1))
+
+### Fixes
+
+- Hand a 503 to the client's retries at once on OTP 28.4 and later ([`e184ac3`](https://github.com/vpndetection-io/sdk-erlang/commit/e184ac393f5fd6d4f91adb02292646bce6d71842))
+
 ## 3.4.3 - 2026-10-04
 
 ### Fixes

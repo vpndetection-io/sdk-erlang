@@ -204,6 +204,11 @@ respond(Socket, <<"/truncated">>, _Query, _Options) ->
     send(Socket, 200, [{<<"content-type">>, <<"application/gzip">>},
                        {<<"content-length">>, integer_to_binary(byte_size(Whole))}],
          binary:part(Whole, 0, byte_size(Whole) div 10));
+%% A 503 naming a `Retry-After', from the API and from object storage alike.
+respond(Socket, Path, _Query, #{unavailable := RetryAfter})
+  when Path =:= <<"/api/v1/database/list">>; Path =:= <<"/unavailable">> ->
+    send(Socket, 503, [{<<"content-type">>, <<"application/json">>}, {<<"retry-after">>, RetryAfter}],
+         iolist_to_binary(json:encode(#{<<"rc">> => <<"UNAVAILABLE">>})));
 respond(Socket, <<"/expired">>, _Query, _Options) ->
     send(Socket, 403, [{<<"content-type">>, <<"application/xml">>}],
          <<"<Error><Code>AccessDenied</Code></Error>">>);

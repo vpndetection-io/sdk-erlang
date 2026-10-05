@@ -293,6 +293,28 @@ a_response_full_of_unknown_keys_mints_no_atoms_test() ->
      || N <- lists:seq(100, 160)],
     ?assertEqual(Before, erlang:system_info(atom_count)).
 
+%% httpc acts on a 503's `Retry-After' itself unless told not to, and from OTP 28.4
+%% waits out any value first, so each attempt would run to its 2 s timeout and fail
+%% as `network'. Three characters, because OTP 27's httpc loops on one or two in a
+%% way no client option stops, and leaves a longer value to the client.
+a_503_carrying_retry_after_reaches_the_retry_policy_test_() ->
+    {timeout, 60, fun() ->
+        Origin = vpndetection_origin:start(#{unavailable => <<"100">>}),
+        Client = vpndetection:new(#{base_url => vpndetection_origin:base_url(Origin), api_key => <<"k">>,
+                                    retries => 2, timeout_ms => 2000}),
+        Calls = [{<<"/api/v1/database/list">>, fun() -> vpndetection:database_list(Client) end},
+                 {<<"/unavailable">>, fun() ->
+                     vpndetection:database_download_bytes(Client, <<"unavailable">>, mmdb)
+                 end}],
+        [begin
+             {Micros, Answer} = timer:tc(Call),
+             ?assertEqual({Path, 3}, {Path, vpndetection_origin:hits(Origin, Path)}),
+             ?assertMatch({Path, {error, #{kind := server_error, status := 503}}}, {Path, Answer}),
+             ?assertEqual({Path, within}, {Path, within(Micros div 1000, {0, 1500})})
+         end || {Path, Call} <- Calls],
+        vpndetection_origin:stop(Origin)
+    end}.
+
 a_transport_failure_is_an_error_not_a_crash_test() ->
     Client = vpndetection:new(#{base_url => <<"http://127.0.0.1:1">>, cache => false,
                                 retries => 0, timeout_ms => 2000}),

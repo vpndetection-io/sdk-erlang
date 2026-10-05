@@ -196,7 +196,7 @@ whole(#{method := Method, url := Url, headers := Headers, timeout_ms := TimeoutM
     %% autoredirect MUST stay false. The download endpoint answers 302 to
     %% object storage, and following it would pull a dataset that routinely
     %% runs to gigabytes into memory as one binary.
-    HttpOpts = [{timeout, TimeoutMs}, {connect_timeout, TimeoutMs}, {autoredirect, false}],
+    HttpOpts = [{timeout, TimeoutMs}, {connect_timeout, TimeoutMs}, {autoredirect, false} | autoretry()],
     %% httpc sends its body-type argument as the content-type and silently drops
     %% one given among the headers, so a form's type has to be moved there.
     {ContentType, Sent} = case lists:keytake(<<"content-type">>, 1, Headers) of
@@ -225,7 +225,7 @@ whole(#{method := Method, url := Url, headers := Headers, timeout_ms := TimeoutM
 %% seconds is a sane deadline for a lookup and the wrong one for a gigabyte,
 %% while a transfer that has stopped making progress is stalled at any size.
 stream(#{url := Url, headers := Headers, timeout_ms := TimeoutMs}, Sink) ->
-    HttpOpts = [{timeout, infinity}, {connect_timeout, TimeoutMs}, {autoredirect, false}],
+    HttpOpts = [{timeout, infinity}, {connect_timeout, TimeoutMs}, {autoredirect, false} | autoretry()],
     Options = [{sync, false}, {stream, {self, once}}, {body_format, binary}, {receiver, self()}],
     case httpc:request(get, httpc_request(Url, Headers), HttpOpts, Options, ?PROFILE) of
         {ok, Id} -> await_start(Id, Sink, TimeoutMs);
@@ -293,6 +293,21 @@ flush(Id) ->
         {http, {Id, _, _, _}} -> flush(Id)
     after 0 ->
         ok
+    end.
+
+%% httpc re-sends a 503 carrying `Retry-After' before the client sees it. From OTP
+%% 28.4 (inets 9.6) it first waits out any value, holding an attempt to its timeout
+%% and re-sending after the call returns; `{autoretry, 0}' hands every 503 to
+%% `with_retry/4' instead. Older inets logs the option as invalid and ignores it.
+autoretry() ->
+    try
+        {ok, Vsn} = application:get_key(inets, vsn),
+        [list_to_integer(Part) || Part <- string:split(Vsn, ".", all)] >= [9, 6]
+    of
+        true -> [{autoretry, 0}];
+        false -> []
+    catch
+        _:_ -> []
     end.
 
 httpc_request(Url, Headers) ->

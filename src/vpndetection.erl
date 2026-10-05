@@ -23,10 +23,12 @@
          oauth_device_authorization/3, oauth_exchange_device_code/3, oauth_exchange_device_code/4,
          oauth_exchange_refresh_token/3, oauth_exchange_refresh_token/4, oauth_revoke/3, oauth_revoke/4,
          oauth_poll_device_token/3, oauth_poll_device_token/4]).
+-export([oauth_authorization_url/4, oauth_authorization_url/5, oauth_exchange_authorization_code/5,
+         oauth_exchange_authorization_code/6, oauth_create_pkce/0, oauth_pkce_challenge/1]).
 
 -export_type([client/0, options/0, lookup_options/0, batch_options/0, downloads_options/0,
               format/0]).
--export_type([oauth_options/0, device_authorization_options/0]).
+-export_type([oauth_options/0, device_authorization_options/0, authorization_url_options/0]).
 
 -define(DEFAULT_BASE_URL, <<"https://api.vpndetection.io">>).
 -define(DEFAULT_CONCURRENCY, 8).
@@ -75,6 +77,8 @@
 -type device_authorization_options() :: #{scope => binary() | string(),
                                           resource => binary() | string(),
                                           timeout_ms => pos_integer() | infinity}.
+-type authorization_url_options() :: #{scope => binary() | string(), state => binary() | string(),
+                                       resource => binary() | string()}.
 
 -spec new() -> client().
 new() ->
@@ -483,6 +487,65 @@ oauth_poll_device_token(Client, ClientId, Device) ->
     {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
 oauth_poll_device_token(Client, ClientId, Device, Options) ->
     checked(Options, fun() -> vpndetection_oauth:poll_device_token(Client, bin(ClientId), Device, Options) end).
+
+-spec oauth_authorization_url(client(), binary() | string(), binary() | string(), binary() | string()) ->
+    {ok, binary()} | {error, vpndetection_error:error()}.
+oauth_authorization_url(Client, ClientId, RedirectUri, CodeChallenge) ->
+    oauth_authorization_url(Client, ClientId, RedirectUri, CodeChallenge, #{}).
+
+%% @doc The URL to open in the person's browser for the authorization code flow,
+%% from the `challenge' of {@link oauth_create_pkce/0}. Makes no request.
+%%
+%% Once they decide, the server redirects to `RedirectUri' with a `code' for
+%% {@link oauth_exchange_authorization_code/5} and the `state' given here, or with
+%% an `error'. `scope', `state' and `resource' are left out when not given or
+%% empty. Every value is percent-encoded over UTF-8, leaving only
+%% `A-Z a-z 0-9 - . _ ~' literal; an empty required value, or one with no UTF-8
+%% form, answers `bad_request'. The client ID can also be the https URL of a
+%% client metadata document the app serves.
+-spec oauth_authorization_url(client(), binary() | string(), binary() | string(), binary() | string(),
+                              authorization_url_options()) ->
+    {ok, binary()} | {error, vpndetection_error:error()}.
+oauth_authorization_url(Client, ClientId, RedirectUri, CodeChallenge, Options) ->
+    Required = [{<<"client_id">>, ClientId}, {<<"redirect_uri">>, RedirectUri},
+                {<<"code_challenge">>, CodeChallenge}],
+    Optional = [{atom_to_binary(Name), Value} || Name <- [scope, state, resource],
+                                                 {ok, Value} <- [maps:find(Name, Options)]],
+    vpndetection_oauth:authorization_url(Client, Required, Optional).
+
+-spec oauth_exchange_authorization_code(client(), binary() | string(), binary() | string(),
+                                        binary() | string(), binary() | string()) ->
+    {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
+oauth_exchange_authorization_code(Client, ClientId, Code, CodeVerifier, RedirectUri) ->
+    oauth_exchange_authorization_code(Client, ClientId, Code, CodeVerifier, RedirectUri, #{}).
+
+%% @doc Exchange the `code' a sign-in's redirect brought back for tokens, once.
+%% `CodeVerifier' is the `verifier' whose challenge went into the authorization
+%% URL, and `RedirectUri' that URL's, exactly.
+%%
+%% Never retried: the server spends the code on first read, before it checks the
+%% verifier, so a retry could only be refused.
+-spec oauth_exchange_authorization_code(client(), binary() | string(), binary() | string(),
+                                        binary() | string(), binary() | string(), oauth_options()) ->
+    {ok, vpndetection_oauth:token_response()} | {error, vpndetection_error:error()}.
+oauth_exchange_authorization_code(Client, ClientId, Code, CodeVerifier, RedirectUri, Options) ->
+    checked(Options, fun() ->
+        vpndetection_oauth:exchange_authorization_code(Client, bin(ClientId), bin(Code), bin(CodeVerifier),
+                                                       bin(RedirectUri), Options)
+    end).
+
+%% @doc A fresh PKCE pair for one sign-in: 32 bytes from `crypto''s secure random
+%% source as a 43-character base64url `verifier', its `S256' `challenge', and the
+%% `method'. The challenge goes into the authorization URL, the verifier only to
+%% the exchange.
+-spec oauth_create_pkce() -> vpndetection_oauth:pkce().
+oauth_create_pkce() ->
+    vpndetection_oauth:create_pkce().
+
+%% @doc The `S256' challenge for a PKCE verifier: its SHA-256, as unpadded base64url.
+-spec oauth_pkce_challenge(binary() | string()) -> binary().
+oauth_pkce_challenge(Verifier) ->
+    vpndetection_oauth:pkce_challenge(bin(Verifier)).
 
 to_file(Client, Id, Format, Dest, Partial, Fd) ->
     Sink = #{acc => Fd, fold => fun(Chunk, Handle) ->

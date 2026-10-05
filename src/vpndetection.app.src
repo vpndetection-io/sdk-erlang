@@ -3,7 +3,7 @@
                 "hosting, CDN and relay detection for any IP address"},
   {vsn, "3.4.3"},
   {registered, []},
-  {applications, [kernel, stdlib, inets, ssl, public_key]},
+  {applications, [kernel, stdlib, inets, ssl, public_key, crypto]},
   {env, []},
   {modules, []},
   {licenses, ["MIT"]},

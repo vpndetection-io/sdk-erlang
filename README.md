@@ -207,6 +207,24 @@ end.
 
 A refusal answers `{error, #{error_code := <<"access_denied">>}}` and a code that expired first `{error, #{error_code := <<"expired_token">>}}`. Client IDs are issued on request from support@vpndetection.io, and `vpndetection:oauth_revoke(Client, ClientId, maps:get(refresh_token, Token))` signs the machine out.
 
+### Sign in with OAuth (authorization code)
+
+An app that can take a browser redirect signs the person in there instead, with a PKCE pair made for that one sign-in.
+
+```erlang
+Client = vpndetection:new(),
+ClientId = <<"your-client-id">>,
+RedirectUri = <<"http://127.0.0.1:8765/callback">>,
+#{verifier := Verifier, challenge := Challenge} = vpndetection:oauth_create_pkce(),
+{ok, Url} = vpndetection:oauth_authorization_url(Client, ClientId, RedirectUri, Challenge,
+    #{scope => <<"apikeys.use">>, state => <<"your-state">>}),
+%% Open Url in the browser. Its redirect to RedirectUri carries code and state.
+{ok, Token} = vpndetection:oauth_exchange_authorization_code(Client, ClientId, Code, Verifier,
+    RedirectUri).
+```
+
+Check that `state` came back as you sent it before you exchange `code`, which works once. The client ID can also be the https URL of a client metadata document your app serves, and such an app is never handed a key, so `Token` carries no `apikey`.
+
 ### Absent is not false
 
 Fields your plan does not include are simply not in the result map. Absent means "not in your plan"; a present `false` means "we checked, and no".

@@ -1,4 +1,5 @@
-%% @doc The OAuth device flow behind the `oauth_*' functions on `vpndetection'.
+%% @doc The OAuth device and authorization code flows behind the `oauth_*'
+%% functions on `vpndetection'.
 %%
 %% No request made here carries the API key the client was built with, and a
 %% client built without one works exactly the same. Every answer is a map whose
@@ -8,8 +9,11 @@
 
 -export([metadata/2, device_authorization/4, exchange_device_code/4,
          exchange_refresh_token/4, revoke/4, poll_device_token/4]).
+-export([authorization_url/3, exchange_authorization_code/6, create_pkce/0, pkce_challenge/1]).
 
--export_type([metadata/0, device_authorization/0, token_response/0]).
+-export_type([metadata/0, device_authorization/0, token_response/0, pkce/0]).
+
+-type pkce() :: #{verifier := binary(), challenge := binary(), method := binary()}.
 
 -type metadata() :: #{
     issuer := binary(),
@@ -47,6 +51,8 @@
 }.
 
 -define(DEVICE_CODE_GRANT, <<"urn:ietf:params:oauth:grant-type:device_code">>).
+%% The only PKCE method the server accepts.
+-define(PKCE_METHOD, <<"S256">>).
 
 %% {wire name, key, type, required}
 -define(METADATA, [
@@ -153,6 +159,42 @@ poll(Client, ClientId, Code, Options, {Wait, Now, Deadline} = Clock, Interval) -
             end
     end.
 
+%% Builds the URL and sends nothing. Required values come first in their order,
+%% then each option given non-empty; a value that is empty where required, or has
+%% no UTF-8 form, is the caller's `bad_request'.
+-spec authorization_url(map(), [{binary(), term()}], [{binary(), term()}]) ->
+    {ok, binary()} | {error, vpndetection_error:error()}.
+authorization_url(#{base_url := BaseUrl}, Required, Optional) ->
+    try
+        Params = [{<<"response_type">>, <<"code">>}]
+            ++ [{Name, required(Name, Value)} || {Name, Value} <- Required]
+            ++ [{<<"code_challenge_method">>, ?PKCE_METHOD}]
+            ++ [{Name, Utf8} || {Name, Value} <- Optional, Utf8 <- [utf8(Name, Value)], Utf8 =/= <<>>],
+        Query = lists:join(<<"&">>, [[Name, <<"=">>, percent_encode(Value)] || {Name, Value} <- Params]),
+        {ok, iolist_to_binary([BaseUrl, <<"/oauth/authorize?">>, Query])}
+    catch
+        throw:{bad_argument, Message} ->
+            {error, #{kind => bad_request, retryable => false, message => Message}}
+    end.
+
+%% Never retried: the server spends the code on first read, before it checks the
+%% verifier, so a retry after a lost answer could only be refused.
+-spec exchange_authorization_code(map(), binary(), binary(), binary(), binary(), map()) ->
+    {ok, token_response()} | {error, vpndetection_error:error()}.
+exchange_authorization_code(Client, ClientId, Code, CodeVerifier, RedirectUri, Options) ->
+    exchange(Client, [{<<"grant_type">>, <<"authorization_code">>}, {<<"code">>, Code},
+                      {<<"redirect_uri">>, RedirectUri}, {<<"client_id">>, ClientId},
+                      {<<"code_verifier">>, CodeVerifier}], Options).
+
+-spec create_pkce() -> pkce().
+create_pkce() ->
+    Verifier = base64url(crypto:strong_rand_bytes(32)),
+    #{verifier => Verifier, challenge => pkce_challenge(Verifier), method => ?PKCE_METHOD}.
+
+-spec pkce_challenge(binary()) -> binary().
+pkce_challenge(Verifier) ->
+    base64url(crypto:hash(sha256, Verifier)).
+
 first_interval(#{interval := Interval}) when is_integer(Interval), Interval >= 1 -> Interval;
 first_interval(_Device) -> 5.
 
@@ -160,6 +202,37 @@ exchange(Client, Form, Options) ->
     Bound = bound(Client, Options),
     Request = vpndetection_http:oauth_request(Bound, <<"/oauth/token">>, Form),
     vpndetection_http:oauth(Bound, Request, 0, decoder(?TOKEN_RESPONSE)).
+
+base64url(Bytes) ->
+    base64:encode(Bytes, #{mode => urlsafe, padding => false}).
+
+required(Name, Value) ->
+    case utf8(Name, Value) of
+        <<>> -> throw({bad_argument, <<Name/binary, " must not be empty">>});
+        Utf8 -> Utf8
+    end.
+
+%% A binary is read as UTF-8 and a string as code points; neither is sent unless
+%% it has a UTF-8 form, which a lone surrogate or a broken byte sequence lacks.
+utf8(Name, Value) when is_binary(Value); is_list(Value) ->
+    try unicode:characters_to_binary(Value) of
+        Utf8 when is_binary(Utf8) -> Utf8;
+        _ -> throw({bad_argument, <<Name/binary, " has no UTF-8 form">>})
+    catch
+        error:badarg -> throw({bad_argument, <<Name/binary, " has no UTF-8 form">>})
+    end;
+utf8(Name, _Value) ->
+    throw({bad_argument, <<Name/binary, " must be a binary or a string">>}).
+
+%% Every byte as %XX but A-Z a-z 0-9 - . _ ~, so a space is %20 and never +.
+percent_encode(Value) ->
+    << <<(escape(Byte))/binary>> || <<Byte>> <= Value >>.
+
+escape(Byte) when Byte >= $A, Byte =< $Z; Byte >= $a, Byte =< $z; Byte >= $0, Byte =< $9;
+                  Byte =:= $-; Byte =:= $.; Byte =:= $_; Byte =:= $~ ->
+    <<Byte>>;
+escape(Byte) ->
+    list_to_binary(io_lib:format("%~2.16.0B", [Byte])).
 
 %% The client with this call's `timeout_ms' in place of its own.
 bound(Client, Options) ->

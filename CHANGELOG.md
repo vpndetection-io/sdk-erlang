@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.5.1 - 2026-10-10
+
+### Fixes
+
+- Re-pin the spec to 2026.10.09: rotating a key needs apikeys.reveal ([`fd0af50`](https://github.com/vpndetection-io/sdk-erlang/commit/fd0af502489a402a2ed502a9be4021a8a52b04f6))
+
 ## 3.5.0 - 2026-10-05
 
 ### Features

@@ -32,6 +32,12 @@
     error_description => binary()
 }.
 
+-define(DAYS, [<<"Mon">>, <<"Tue">>, <<"Wed">>, <<"Thu">>, <<"Fri">>, <<"Sat">>, <<"Sun">>]).
+-define(WEEKDAYS, [<<"Monday">>, <<"Tuesday">>, <<"Wednesday">>, <<"Thursday">>, <<"Friday">>,
+                   <<"Saturday">>, <<"Sunday">>]).
+-define(MONTHS, [<<"Jan">>, <<"Feb">>, <<"Mar">>, <<"Apr">>, <<"May">>, <<"Jun">>, <<"Jul">>,
+                 <<"Aug">>, <<"Sep">>, <<"Oct">>, <<"Nov">>, <<"Dec">>]).
+
 %% @doc Classify a non-2xx response.
 -spec from_response(100..599, [{binary(), binary()}], binary()) -> error().
 from_response(Status, Headers, Body) ->
@@ -107,42 +113,106 @@ classify(Status, _, Message) ->
 
 %% The two APIs behind this host answer with different envelopes: the lookup
 %% endpoint uses `error', the database endpoints use `rc'. Both are read here so
-%% a caller never has to know which one they hit.
+%% a caller never has to know which one they hit, and the first that says
+%% something is the message: an empty one says nothing, so
+%% `{"error": "", "rc": "QUOTA_EXCEEDED"}' reads as QUOTA_EXCEEDED.
 message_of(Body, Status) ->
     Decoded = try json:decode(Body) catch _:_ -> #{} end,
-    case Decoded of
-        #{<<"error">> := M} when is_binary(M) -> M;
-        #{<<"rc">> := M} when is_binary(M) -> M;
-        _ -> iolist_to_binary(io_lib:format("request failed with status ~b", [Status]))
+    Said = [Value || is_map(Decoded), Key <- [<<"error">>, <<"rc">>],
+                     Value <- [maps:get(Key, Decoded, undefined)], is_binary(Value), Value =/= <<>>],
+    case Said of
+        [Message | _] -> Message;
+        [] -> iolist_to_binary(io_lib:format("request failed with status ~b", [Status]))
     end.
 
 retry_after(Headers) ->
     case lists:keyfind(<<"retry-after">>, 1, Headers) of
-        {_, Value} -> seconds(string:trim(Value));
+        {_, Value} -> seconds(ows(Value));
         false -> undefined
     end.
 
-seconds(<<>>) ->
-    undefined;
+%% Digits, or an HTTP date, and nothing else, so a value that is neither is no
+%% Retry-After at all and the 429 a spent quota. `binary_to_integer/1' takes a
+%% sign, and httpd_util's date reader takes any zone as GMT and an hour or a day
+%% that does not exist, raising out of the call for some of them.
 seconds(Value) ->
-    try binary_to_integer(Value) of
-        Seconds when Seconds >= 0 -> Seconds;
-        _ -> undefined
-    catch
-        _:_ -> from_http_date(Value)
+    case Value =/= <<>> andalso digits(Value) of
+        true -> binary_to_integer(Value);
+        false -> http_date(Value)
     end.
 
-%% The header also permits an HTTP date, in which case the wait is the distance
-%% from now rather than the value itself.
-from_http_date(Value) ->
-    try httpd_util:convert_request_date(binary_to_list(Value)) of
-        bad_date ->
-            undefined;
-        DateTime ->
-            Now = calendar:universal_time(),
-            Delta = calendar:datetime_to_gregorian_seconds(DateTime)
-                - calendar:datetime_to_gregorian_seconds(Now),
-            max(0, Delta)
-    catch
-        _:_ -> undefined
+%% RFC 9110's three forms, in GMT: IMF-fixdate, RFC 850 and asctime. The wait is
+%% the distance from now rather than the value itself.
+http_date(<<Day:3/binary, ", ", D:2/binary, " ", Mon:3/binary, " ", Y:4/binary, " ", Time:8/binary,
+            " GMT">>) ->
+    named(lists:member(Day, ?DAYS), Y, Mon, D, Time);
+http_date(<<Day:3/binary, " ", Mon:3/binary, " ", D:2/binary, " ", Time:8/binary, " ", Y:4/binary>>) ->
+    named(lists:member(Day, ?DAYS), Y, Mon, padded(D), Time);
+http_date(Value) ->
+    case binary:split(Value, <<", ">>) of
+        [Weekday, <<D:2/binary, "-", Mon:3/binary, "-", YY:2/binary, " ", Time:8/binary, " GMT">>] ->
+            named(lists:member(Weekday, ?WEEKDAYS), century(YY), Mon, D, Time);
+        _ ->
+            undefined
     end.
+
+named(false, _Y, _Mon, _D, _Time) ->
+    undefined;
+named(true, Y, Mon, D, <<H:2/binary, ":", Mi:2/binary, ":", S:2/binary>>) ->
+    case digits(<<Y/binary, D/binary, H/binary, Mi/binary, S/binary>>) of
+        true -> until(Y, month(Mon, ?MONTHS, 1), D, H, Mi, S);
+        false -> undefined
+    end;
+named(true, _Y, _Mon, _D, _Time) ->
+    undefined.
+
+until(_Y, undefined, _D, _H, _Mi, _S) ->
+    undefined;
+until(Y, Month, D, H, Mi, S) ->
+    Date = {binary_to_integer(Y), Month, binary_to_integer(D)},
+    Time = {binary_to_integer(H), binary_to_integer(Mi), binary_to_integer(S)},
+    case calendar:valid_date(Date) andalso element(1, Time) < 24 andalso element(2, Time) < 60
+         andalso element(3, Time) < 60 of
+        true ->
+            Delta = calendar:datetime_to_gregorian_seconds({Date, Time})
+                - calendar:datetime_to_gregorian_seconds(calendar:universal_time()),
+            max(0, Delta);
+        false ->
+            undefined
+    end.
+
+%% A two-digit year more than 50 years ahead is the most recent past one with
+%% those digits, as RFC 9110 has a recipient read it.
+century(<<YY:2/binary>> = Digits) ->
+    case digits(Digits) of
+        true ->
+            {{Now, _, _}, _} = calendar:universal_time(),
+            Year = Now - Now rem 100 + binary_to_integer(YY),
+            Read = case Year > Now + 50 of
+                true -> Year - 100;
+                false -> Year
+            end,
+            integer_to_binary(Read);
+        false ->
+            <<"x">>
+    end.
+
+%% The space and tabs either side of a field value are not part of it.
+ows(<<C, Rest/binary>>) when C =:= $\s; C =:= $\t ->
+    ows(Rest);
+ows(Value) ->
+    Size = byte_size(Value),
+    case Size > 0 andalso binary:last(Value) of
+        C when C =:= $\s; C =:= $\t -> ows(binary:part(Value, 0, Size - 1));
+        _ -> Value
+    end.
+
+padded(<<" ", Digit>>) -> <<"0", Digit>>;
+padded(D) -> D.
+
+month(_Mon, [], _N) -> undefined;
+month(Mon, [Mon | _], N) -> N;
+month(Mon, [_ | Rest], N) -> month(Mon, Rest, N + 1).
+
+digits(Value) ->
+    lists:all(fun(C) -> C >= $0 andalso C =< $9 end, binary_to_list(Value)).

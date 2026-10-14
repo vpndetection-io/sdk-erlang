@@ -688,3 +688,73 @@ assert_backoff_used(RetryAfter) ->
     end,
 
     ?assertEqual({{ok, []}, 2}, {Answer, counters:get(Served, 1)}).
+
+%% An empty message says nothing, so it gives way to the next, then to the
+%% status: it answered a refusal with a message of nothing at all.
+an_empty_message_gives_way_to_the_next_and_then_to_the_status_test_() ->
+    Status = <<"request failed with status 403">>,
+    Cases = [{#{<<"rc">> => <<"UNAUTHORIZED_ID">>}, <<"UNAUTHORIZED_ID">>},
+             {#{<<"error">> => <<>>, <<"rc">> => <<"QUOTA_EXCEEDED">>}, <<"QUOTA_EXCEEDED">>},
+             {#{<<"error">> => null, <<"rc">> => <<"UNAUTHORIZED_ID">>}, <<"UNAUTHORIZED_ID">>},
+             {#{<<"rc">> => <<>>}, Status}, {#{<<"rc">> => null}, Status}, {#{<<"error">> => 7}, Status},
+             {#{}, Status}],
+    [{binary_to_list(iolist_to_binary(json:encode(Body))), fun() ->
+         Stub = vpndetection_stub:start(#{<<"/api/v1/database/list">> => #{status => 403, body => Body}}),
+         Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), cache => false, api_key => <<"k">>}),
+         ?assertMatch({error, #{kind := forbidden, message := Want}}, vpndetection:database_list(Client)),
+         vpndetection_stub:stop(Stub)
+     end} || {Body, Want} <- Cases].
+
+%% Digits, or an HTTP date in one of RFC 9110's three forms, in GMT, and nothing
+%% else. httpd_util read any zone as GMT, a day that does not exist as one that
+%% does or as a crash in the caller, and the digits took a sign.
+a_retry_after_is_digits_or_an_http_date_and_nothing_else_test_() ->
+    At = calendar:system_time_to_universal_time(erlang:system_time(second) + 60, second),
+    {{Y, Mo, D}, {H, Mi, S}} = At,
+    Day = lists:nth(calendar:day_of_the_week(Y, Mo, D), ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]),
+    Weekday = lists:nth(calendar:day_of_the_week(Y, Mo, D),
+                        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]),
+    Mon = lists:nth(Mo, ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]),
+    Clock = io_lib:format("~2..0b:~2..0b:~2..0b", [H, Mi, S]),
+    Imf = io_lib:format("~s, ~2..0b ~s ~b ~s", [Day, D, Mon, Y, Clock]),
+    Next = Y + 1,
+    Cases = [
+        {"0", rate_limited}, {"120", rate_limited}, {" 7 ", rate_limited},
+        {[Imf, " GMT"], rate_limited},
+        {io_lib:format("~s, ~2..0b-~s-~2..0b ~s GMT", [Weekday, D, Mon, Y rem 100, Clock]), rate_limited},
+        {io_lib:format("~s ~s ~2b ~s ~b", [Day, Mon, D, Clock, Y]), rate_limited},
+        {[Imf, " +0000"], quota_exceeded}, {[Imf, " +0500"], quota_exceeded},
+        {[Imf, " EST"], quota_exceeded}, {[Imf, " PST"], quota_exceeded}, {[Imf, " gmt"], quota_exceeded},
+        {io_lib:format("~b-~2..0b-~2..0bT~sZ", [Y, Mo, D, Clock]), quota_exceeded},
+        {io_lib:format("Xyz, ~2..0b ~s ~b ~s GMT", [D, Mon, Y, Clock]), quota_exceeded},
+        {io_lib:format("~s, ~2..0b Foo ~b ~s GMT", [Day, D, Y, Clock]), quota_exceeded},
+        {io_lib:format("~2..0b ~s ~b ~s GMT", [D, Mon, Y, Clock]), quota_exceeded},
+        {io_lib:format("Tue, 31 Nov ~b 08:49:37 GMT", [Next]), quota_exceeded},
+        {io_lib:format("Mon, 30 Feb ~b 08:49:37 GMT", [Next]), quota_exceeded},
+        {io_lib:format("Fri, 01 Jan ~b 25:00:00 GMT", [Next]), quota_exceeded},
+        {io_lib:format("Fri, 01 Jan ~b 25:61:61 GMT", [Next]), quota_exceeded},
+        {io_lib:format("Fri, 01 Jan ~b 08:61:00 GMT", [Next]), quota_exceeded},
+        {"1.5", quota_exceeded}, {"+1", quota_exceeded}, {"-1", quota_exceeded},
+        {"0x10", quota_exceeded}, {"1_0", quota_exceeded}, {"1e3", quota_exceeded},
+        {"x", quota_exceeded}, {"tomorrow", quota_exceeded}, {"", quota_exceeded}
+    ],
+    [{lists:flatten(io_lib:format("Retry-After '~s'", [Value])), fun() -> assert_kind(Value, Kind) end}
+     || {Value, Kind} <- Cases]
+    ++ [{"a date is read as the seconds until it, in GMT", fun() ->
+            {error, #{retry_after := Seconds}} = throttled(iolist_to_binary([Imf, " GMT"])),
+            ?assert(Seconds >= 55 andalso Seconds =< 60)
+        end},
+        {"a date already past is a wait of nothing", fun() ->
+            ?assertMatch({error, #{kind := rate_limited, retry_after := 0}},
+                         throttled(<<"Sun, 06 Nov 1994 08:49:37 GMT">>))
+        end}].
+
+assert_kind(Value, Kind) ->
+    ?assertMatch({error, #{kind := Kind}}, throttled(iolist_to_binary(Value))).
+
+throttled(Value) ->
+    Http = fun(_Request) ->
+        {ok, #{status => 429, headers => [{<<"retry-after">>, Value}], body => <<>>}}
+    end,
+    vpndetection:lookup(vpndetection:new(#{api_key => <<"k">>, retries => 0, http => Http, cache => false}),
+                        <<"1.1.1.1">>).

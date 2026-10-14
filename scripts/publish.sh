@@ -40,11 +40,13 @@ fi
 # the repo. Any _build that DID land in the repo is dropped from the copy, as
 # scripts/test.sh does: rebar3 keeps its beams rather than rebuilding, and the
 # suite then passes or fails against code that is no longer there.
+# The key reaches docker by NAME: a value on its command line is visible to ps.
+export HEX_API_KEY="${HEX_API_KEY:-}"
 docker run --rm \
     -v "$PWD:/src:ro" \
     -e HOME=/tmp \
     -e LANG=C.UTF-8 \
-    -e HEX_API_KEY="${HEX_API_KEY:-}" \
+    -e HEX_API_KEY \
     "$OTP_IMAGE" sh -euc "
         cp -R /src /w
         cd /w

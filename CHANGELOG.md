@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.5.2 - 2026-10-14
+
+### Fixes
+
+- Read Retry-After as digits or an RFC 9110 date in GMT, never crashing ([`8087116`](https://github.com/vpndetection-io/sdk-erlang/commit/80871167cbb8584ab5285933b265c8c5dcd7c31b))
+- Trim the key and refuse a control character in it; retry an unreadable 2xx ([`183ffdd`](https://github.com/vpndetection-io/sdk-erlang/commit/183ffdd46c7315614675e3d9fb1d4443b2138bd4))
+
 ## 3.5.1 - 2026-10-10
 
 ### Fixes

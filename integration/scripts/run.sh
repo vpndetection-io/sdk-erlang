@@ -51,7 +51,8 @@ function main() {
 # The suite proper, run inside the image. Resolution comes first and its SOURCE
 # is checked before a single test runs: `resolve.escript resolved' reads
 # rebar.lock, where a hex package locks as `pkg <version>' and anything else
-# (git, path, absent) does not.
+# (git, path, absent) does not, and `checksum' holds the locked tarball to the
+# one hex.pm lists, since the lock does not say which repository served it.
 function runSuite() {
     cat <<'INNER'
         rm -f rebar.lock
@@ -59,13 +60,14 @@ function runSuite() {
         resolved="$(escript scripts/resolve.escript resolved)"
         case "$resolved" in
             pkg\ *)
-                echo "==> resolved ${resolved} from hex"
+                echo "==> resolved ${resolved}"
                 ;;
             *)
                 echo "FAILED: vpndetection resolved as '${resolved}', so the tests would run against something other than a release" >&2
                 exit 1
                 ;;
         esac
+        escript scripts/resolve.escript checksum
         rebar3 eunit
 INNER
 }

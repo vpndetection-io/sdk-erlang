@@ -188,6 +188,22 @@ fixture(#{<<"body">> := Body}) ->
     Ip = maps:get(<<"ip">>, Body),
     {Ip, #{Ip => #{status => 200, body => Body}}}.
 
+%% `os:getenv/1' answers `false' for a variable that is not set, which is what the
+%% README's setup hands the core then: it runs with no key, and says so once.
+an_unset_key_builds_a_keyless_client_and_warns_once_test() ->
+    Warnings = collector(),
+    {ok, Core} = vpndetection_middleware:new(#{api_key => false, on_warn => sink(Warnings)}),
+
+    ?assertEqual(undefined, maps:get(api_key, maps:get(client, Core))),
+    ?assertMatch([_], seen(Warnings)),
+    ?assertNotEqual(nomatch, binary:match(hd(seen(Warnings)), <<"os:getenv/1">>)),
+    vpndetection_middleware:close(Core),
+
+    Quiet = collector(),
+    {ok, Keyed} = vpndetection_middleware:new(#{api_key => <<"k">>, on_warn => sink(Quiet)}),
+    ?assertEqual([], seen(Quiet)),
+    vpndetection_middleware:close(Keyed).
+
 serving(Body, Options) ->
     Stub = vpndetection_stub:start(
         #{?PUBLIC_IP => #{status => 200, body => Body#{<<"ip">> => ?PUBLIC_IP}}}

@@ -137,7 +137,8 @@ database_responses_are_unwrapped_at_the_right_depth_test() ->
         <<"/api/v1/database/downloads">> => #{body => #{
             <<"downloads">> => [#{<<"dataset_id">> => <<"vpn_ip_extended_v1">>}]}},
         <<"/api/v1/database/metadata">> => #{body => #{
-            <<"id">> => <<"vpn_ip_extended_v1">>, <<"entries">> => 42}}
+            <<"id">> => <<"vpn_ip_extended_v1">>, <<"entries">> => 42,
+            <<"updated">> => <<"2026-10-01T00:00:00Z">>, <<"schema">> => #{}}}
     }),
     Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), api_key => <<"k">>}),
 
@@ -688,6 +689,132 @@ assert_backoff_used(RetryAfter) ->
     end,
 
     ?assertEqual({{ok, []}, 2}, {Answer, counters:get(Served, 1)}).
+
+%% A blank key is what an unset secret interpolates to, and `false' what
+%% `os:getenv/1' answers for an unset variable; `Bearer' with a blank behind it
+%% reads as a wrong key rather than as none.
+a_blank_or_unset_key_sends_no_authorization_header_test() ->
+    [?assertEqual({Key, false}, {Key, lists:keyfind(<<"authorization">>, 1, headers_sent(Key))})
+     || Key <- [<<"   ">>, <<"\t">>, " \r\n ", "", <<>>, false]].
+
+%% A key read from a file ends with a newline; the blanks around a key are no
+%% part of it.
+a_key_is_sent_without_the_blanks_around_it_test() ->
+    [?assertEqual({Key, {<<"authorization">>, <<"Bearer sekrit">>}},
+                  {Key, lists:keyfind(<<"authorization">>, 1, headers_sent(Key))})
+     || Key <- [<<"sekrit\n">>, "sekrit\r\n", <<" \tsekrit ">>]].
+
+%% httpc writes a header value out as it is given, so a control character inside
+%% the key reached the wire, and a CR LF started a header of its own.
+a_key_holding_a_control_character_is_refused_by_new_test() ->
+    [?assertError({badarg, {api_key, control_character}},
+                  vpndetection:new(#{api_key => Key, cache => false, http => fun(_) -> error(sent) end}))
+     || Key <- [<<"sekrit\r\nx-injected: 1">>, "sek\nrit", <<"sek", 1, "rit">>, <<"sek", 0, "rit">>,
+                <<"sekrit", 127>>, <<"sek\trit">>]].
+
+headers_sent(Key) ->
+    Parent = self(),
+    Http = fun(#{headers := Headers}) ->
+        Parent ! {headers_sent, Headers},
+        {ok, #{status => 200, headers => [], body => <<"{\"ip\":\"1.1.1.1\",\"is_vpn\":false}">>}}
+    end,
+    {ok, _} = vpndetection:lookup(vpndetection:new(#{api_key => Key, http => Http, cache => false}),
+                                  <<"1.1.1.1">>),
+    receive {headers_sent, Headers} -> Headers after 1000 -> error(nothing_sent) end.
+
+%% Erlang orders every atom above every number, so `infinity' retried an outage
+%% for ever; a call refuses one before any request, as it refuses a bad timeout.
+a_retries_that_is_not_a_count_is_refused_test() ->
+    Invalid = [infinity, -1, 1.5, foo, "2"],
+    [?assertError({badarg, {retries, V}}, vpndetection:new(#{retries => V, cache => false})) || V <- Invalid],
+    [?assertMatch(#{retries := V}, vpndetection:new(#{retries => V, cache => false})) || V <- [0, 5]],
+
+    Stub = vpndetection_stub:start(routes([<<"1.1.1.1">>])),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), cache => false}),
+    Calls = [
+        {lookup, fun(O) -> vpndetection:lookup(Client, <<"1.1.1.1">>, O) end},
+        {my_ip, fun(O) -> vpndetection:my_ip(Client, O) end},
+        {my_entitlement, fun(O) -> vpndetection:my_entitlement(Client, O) end},
+        {lookup_batch, fun(O) ->
+            #{<<"1.1.1.1">> := Answer} = vpndetection:lookup_batch(Client, [<<"1.1.1.1">>], O),
+            Answer
+        end}
+    ],
+    [?assertMatch({Name, V, {error, #{kind := bad_request, retryable := false}}},
+                  {Name, V, Call(#{retries => V})})
+     || {Name, Call} <- Calls, V <- Invalid],
+    ?assertEqual(0, vpndetection_stub:calls(Stub)),
+    vpndetection_stub:stop(Stub).
+
+%% A library is seldom started, so the version has to come from loading it.
+the_client_names_itself_and_this_release_test() ->
+    _ = application:unload(vpndetection),
+    Agent = lists:keyfind(<<"user-agent">>, 1, headers_sent(<<"k">>)),
+    {ok, Vsn} = application:get_key(vpndetection, vsn),
+    ?assertEqual({<<"user-agent">>, iolist_to_binary(["vpndetection-erlang/", Vsn])}, Agent).
+
+%% A proxy's HTML page, a cut-off body, `null' or an object without what a call
+%% returns is the server's failure, not an answer: a retried server_error
+%% carrying the status, as any outage is.
+a_2xx_the_call_cannot_read_is_a_retried_server_error_test_() ->
+    Unreadable = [<<"<html>gateway</html>">>, <<"{\"ip\":">>, <<>>, <<"null">>, <<"[]">>, <<"\"ip\"">>,
+                  <<"{}">>],
+    Calls = [{"lookup", fun(C) -> vpndetection:lookup(C, <<"1.1.1.1">>) end},
+             {"my_ip", fun vpndetection:my_ip/1},
+             {"my_entitlement", fun vpndetection:my_entitlement/1},
+             {"database_list", fun vpndetection:database_list/1},
+             {"database_metadata", fun(C) -> vpndetection:database_metadata(C, <<"vpn_ip_v1">>) end},
+             {"database_checksums", fun(C) -> vpndetection:database_checksums(C, <<"vpn_ip_v1">>, mmdb) end},
+             {"database_downloads", fun vpndetection:database_downloads/1},
+             {"lookup_batch", fun(C) ->
+                 #{<<"1.1.1.1">> := One, <<"2.2.2.2">> := Two} =
+                     vpndetection:lookup_batch(C, [<<"1.1.1.1">>, <<"2.2.2.2">>]),
+                 ?assertEqual(One, Two),
+                 One
+             end}],
+    WrongTypes = [{"lookup", <<"{\"ip\":\"1.1.1.1\"}">>}, {"lookup", <<"{\"ip\":null,\"is_vpn\":false}">>},
+                  {"my_entitlement", <<"{\"org_id\":\"o\",\"apikey\":{},\"plan\":{}}">>},
+                  {"database_list", <<"{\"databases\":{}}">>}, {"database_list", <<"{\"databases\":null}">>},
+                  {"database_list", <<"{\"databases\":[1]}">>}, {"database_checksums", <<"{\"checksums\":[]}">>},
+                  {"database_downloads", <<"{\"downloads\":{}}">>},
+                  {"database_downloads", <<"{\"downloads\":[null]}">>},
+                  {"database_metadata", <<"{\"id\":\"vpn_ip_v1\",\"entries\":1,\"schema\":{}}">>},
+                  {"lookup_batch", <<"{\"results\":[],\"errors\":[]}">>},
+                  {"lookup_batch", <<"{\"answers\":{}}">>}],
+    [{Name ++ " " ++ binary_to_list(Body), fun() -> assert_unreadable(Body, Call) end}
+     || {Name, Call} <- Calls, Body <- Unreadable]
+    ++ [{Name ++ " " ++ binary_to_list(Body), fun() -> assert_unreadable(Body, proplists:get_value(Name, Calls)) end}
+        || {Name, Body} <- WrongTypes]
+    ++ [{"a 2xx in place of the download link's redirect", fun() ->
+            assert_unreadable(<<"{}">>, fun(C) -> vpndetection:database_download_url(C, <<"vpn_ip_v1">>, mmdb) end)
+        end}].
+
+assert_unreadable(Body, Call) ->
+    Sent = counters:new(1, []),
+    Http = fun(_Request) ->
+        counters:add(Sent, 1, 1),
+        {ok, #{status => 200, headers => [], body => Body}}
+    end,
+    Client = vpndetection:new(#{api_key => <<"k">>, retries => 1, http => Http, cache => false}),
+
+    ?assertMatch({error, #{kind := server_error, retryable := true, status := 200}}, Call(Client)),
+    ?assertEqual(2, counters:get(Sent, 1)).
+
+%% One entry the batch cannot read is that address's error alone; the rest of the
+%% chunk is answered, and nothing is sent again.
+a_batch_entry_that_cannot_be_read_fails_only_its_address_test() ->
+    Sent = counters:new(1, []),
+    Body = <<"{\"results\":{\"1.1.1.1\":{\"ip\":\"1.1.1.1\",\"is_vpn\":false},\"2.2.2.2\":7},\"errors\":{}}">>,
+    Http = fun(_Request) ->
+        counters:add(Sent, 1, 1),
+        {ok, #{status => 200, headers => [], body => Body}}
+    end,
+    Client = vpndetection:new(#{api_key => <<"k">>, retries => 2, http => Http, cache => false}),
+
+    Answers = vpndetection:lookup_batch(Client, [<<"1.1.1.1">>, <<"2.2.2.2">>]),
+    ?assertMatch(#{<<"1.1.1.1">> := {ok, #{ip := <<"1.1.1.1">>}},
+                   <<"2.2.2.2">> := {error, #{kind := server_error, status := 200}}}, Answers),
+    ?assertEqual(1, counters:get(Sent, 1)).
 
 %% An empty message says nothing, so it gives way to the next, then to the
 %% status: it answered a refusal with a message of nothing at all.

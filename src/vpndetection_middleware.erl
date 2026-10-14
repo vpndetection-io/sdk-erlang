@@ -25,7 +25,7 @@
     %% be on different plans and entitled to different fields. A client passed
     %% in is NOT closed by close/1.
     client => vpndetection:client(),
-    api_key => binary() | string(),
+    api_key => binary() | string() | false,
     base_url => binary() | string(),
     %% How long a lookup may hold the request. Ignored when `client' is set.
     timeout_ms => pos_integer(),
@@ -78,6 +78,8 @@ new(Options) ->
                         "signals you act on">>}};
         ok ->
             {Client, Owns} = client(Options),
+            OnWarn = maps:get(on_warn, Options, fun(M) -> logger:warning(M) end),
+            unset_key(Options, OnWarn),
             {ok, #{
                 client => Client,
                 owns_client => Owns,
@@ -87,7 +89,7 @@ new(Options) ->
                 condition => Condition,
                 fail_closed => maps:get(fail_closed, Options, false),
                 on_missing_field => maps:get(on_missing_field, Options, warn),
-                on_warn => maps:get(on_warn, Options, fun(M) -> logger:warning(M) end),
+                on_warn => OnWarn,
                 warned => make_ref()
             }}
     end.
@@ -220,6 +222,19 @@ warn(Core, Message) ->
             _ = (maps:get(on_warn, Core))(Message),
             ok
     end.
+
+%% `false' is what `os:getenv/1' answers for a variable that is not set, so a core
+%% built from one runs with no key: said once, here, because every lookup then
+%% spends the free allowance, which is counted per source address, and a server
+%% is one.
+unset_key(#{client := _}, _OnWarn) ->
+    ok;
+unset_key(#{api_key := false}, OnWarn) ->
+    _ = OnWarn(<<"api_key is false, which os:getenv/1 answers for an unset variable, so every lookup "
+                 "goes out with no key, on the free allowance of 1000 a day per source address">>),
+    ok;
+unset_key(_Options, _OnWarn) ->
+    ok.
 
 client(#{client := Client}) ->
     {Client, false};

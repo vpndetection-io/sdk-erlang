@@ -6,10 +6,10 @@
 %% chunk at a time.
 -module(vpndetection_http).
 
--export([ensure_ready/0, httpc_fun/0, get_json/4, post_json/4, get_redirect/4, get_stream/4, escape/1]).
+-export([ensure_ready/0, httpc_fun/0, get_json/5, post_json/5, get_redirect/4, get_stream/4, escape/1]).
 -export([oauth_request/3, oauth/4]).
 
--export_type([request/0, response/0, result/0, sink/0, fold/0, http_fun/0]).
+-export_type([request/0, response/0, result/0, sink/0, fold/0, http_fun/0, member/0]).
 
 -type request() :: #{
     method := get | post,
@@ -42,6 +42,11 @@
 
 -type http_fun() :: fun((request()) -> response()).
 
+%% What a 2xx must hold to be a call's answer: the one member it returns and that
+%% member's type; for an answer that is the whole object, the members it may not
+%% go without; or, for a batch chunk, a `results' or an `errors' object.
+-type member() :: {binary(), map | list} | {whole, [binary()]} | chunk.
+
 %% Requests go through a profile of our own rather than httpc's default one, so
 %% an application that retunes the default profile (a proxy, a different
 %% ipfamily, its own timeouts) does not silently reconfigure this client, and
@@ -72,31 +77,60 @@ ensure_ready() ->
 httpc_fun() ->
     fun send/1.
 
-%% @doc Fetch and decode a JSON body, retrying what is worth retrying.
--spec get_json(map(), binary(), [{binary(), binary()}], non_neg_integer()) ->
-    {ok, map()} | {error, vpndetection_error:error()}.
-get_json(Client, Path, Query, Retries) ->
-    with_retry(Client, api_request(Client, Path, Query), Retries, fun json_object/1).
+%% @doc Fetch and decode a JSON answer, retrying what is worth retrying. `Member'
+%% says what the answer must hold: the one member a call returns, which is what
+%% this answers, or the members a whole-object answer may not go without.
+-spec get_json(map(), binary(), [{binary(), binary()}], non_neg_integer(), member()) ->
+    {ok, map() | [map()]} | {error, vpndetection_error:error()}.
+get_json(Client, Path, Query, Retries, Member) ->
+    with_retry(Client, api_request(Client, Path, Query), Retries, fun(Result) -> answer(Result, Member) end).
 
 %% @doc POST a JSON body and decode the JSON object it answers with. The one
 %% request with a body: the batch.
--spec post_json(map(), binary(), binary(), non_neg_integer()) ->
-    {ok, map()} | {error, vpndetection_error:error()}.
-post_json(Client, Path, Body, Retries) ->
+-spec post_json(map(), binary(), binary(), non_neg_integer(), member()) ->
+    {ok, map() | [map()]} | {error, vpndetection_error:error()}.
+post_json(Client, Path, Body, Retries, Member) ->
     Request = (api_request(Client, Path, []))#{method := post, body => Body},
-    with_retry(Client, Request, Retries, fun json_object/1).
+    with_retry(Client, Request, Retries, fun(Result) -> answer(Result, Member) end).
 
-json_object(#{status := 200, body := Body}) ->
-    try json:decode(Body) of
-        Decoded when is_map(Decoded) -> {ok, Decoded};
-        _ -> {error, #{kind => server_error, message => <<"response body was not an object">>,
-                       retryable => false}}
-    catch
-        _:_ -> {error, #{kind => server_error, message => <<"response body was not JSON">>,
-                         retryable => false}}
+%% A 2xx is the answer only once it reads as one: a proxy's HTML page, a cut-off,
+%% empty or non-object body, or an object without what the call returns is the
+%% server's fault, retried and carrying its status, never a value handed back as
+%% if it were the answer.
+answer(#{status := Status, body := Body}, Member) when Status >= 200, Status < 300 ->
+    Decoded = try json:decode(Body) catch _:_ -> unreadable end,
+    case read(Decoded, Member) of
+        {ok, Answer} -> {ok, Answer};
+        {error, Message} -> {error, unreadable(Status, Message)}
     end;
-json_object(Result) ->
+answer(Result, _Member) ->
     {error, failure(Result)}.
+
+read(Object, {whole, Required}) when is_map(Object) ->
+    case [Key || Key <- Required, maps:get(Key, Object, null) =:= null] of
+        [] -> {ok, Object};
+        [Key | _] -> {error, <<"the API answered with no ", Key/binary>>}
+    end;
+read(Object, chunk) when is_map(Object) ->
+    case is_map(maps:get(<<"results">>, Object, null)) orelse is_map(maps:get(<<"errors">>, Object, null)) of
+        true -> {ok, Object};
+        false -> {error, <<"the API answered with neither results nor errors">>}
+    end;
+read(Object, {Key, Type}) when is_map(Object) ->
+    case maps:find(Key, Object) of
+        {ok, Value} when Type =:= map, is_map(Value) -> {ok, Value};
+        {ok, Value} when Type =:= list, is_list(Value) ->
+            case lists:all(fun erlang:is_map/1, Value) of
+                true -> {ok, Value};
+                false -> {error, <<"the API answered ", Key/binary, " holding something not an object">>}
+            end;
+        _ -> {error, <<"the API answered with no ", Key/binary>>}
+    end;
+read(_Decoded, _Member) ->
+    {error, <<"the API did not answer with a JSON object">>}.
+
+unreadable(Status, Message) ->
+    #{kind => server_error, retryable => true, status => Status, message => Message}.
 
 %% @doc A request to the authorization server, carrying NO credential whatever
 %% the client holds: these endpoints have no use for the API key, and on the
@@ -161,9 +195,8 @@ get_redirect(Client, Path, Query, Retries) ->
                 false -> {error, #{kind => server_error, retryable => false, status => Status,
                                    message => <<"redirect carried no Location header">>}}
             end;
-        (#{status := 200}) ->
-            {error, #{kind => server_error, retryable => false, status => 200,
-                      message => <<"expected a redirect to object storage">>}};
+        (#{status := Status}) when Status >= 200, Status < 300 ->
+            {error, unreadable(Status, <<"expected a redirect to object storage">>)};
         (Result) ->
             {error, failure(Result)}
     end).

@@ -43,6 +43,8 @@
 %% The most addresses POST /batch takes in one call; a larger batch is sent in
 %% chunks of this size.
 -define(BATCH_MAX, 1000).
+%% What a lookup answers on every plan.
+-define(LOOKUP, {whole, [<<"ip">>, <<"is_vpn">>]}).
 
 -opaque client() :: #{
     base_url := binary(),
@@ -56,7 +58,7 @@
 }.
 
 -type options() :: #{
-    api_key => binary() | string(),
+    api_key => binary() | string() | false,
     base_url => binary() | string(),
     cache => #{max => pos_integer(), ttl_ms => pos_integer()} | false,
     concurrency => pos_integer(),
@@ -87,7 +89,15 @@ new() ->
 %% @doc Build a client.
 %%
 %% `api_key' is optional: without one you get the free tier, which answers `ip'
-%% and `is_vpn' and allows 1000 requests per day per source address.
+%% and `is_vpn' and allows 1000 requests per day per source address. An empty or
+%% blank key is no key, and so is `false', which is what `os:getenv/1' answers
+%% for a variable that is not set. The key is trimmed, so one read from a file
+%% with its newline works; one still holding a control character raises
+%% `{badarg, {api_key, control_character}}', naming the cause and not the key.
+%%
+%% `timeout_ms' is milliseconds from 1 to 4294967295, or `infinity' for no bound,
+%% and `retries' an integer of 0 or more; anything else raises `badarg' here
+%% rather than failing every call.
 %%
 %% The cache is per client and never shared, because two clients holding
 %% different keys are on different plans and so entitled to different fields.
@@ -100,16 +110,22 @@ new(Options) ->
         true -> ok;
         false -> erlang:error({badarg, {timeout_ms, TimeoutMs}})
     end,
+    Retries = maps:get(retries, Options, ?DEFAULT_RETRIES),
+    case valid_retries(Retries) of
+        true -> ok;
+        false -> erlang:error({badarg, {retries, Retries}})
+    end,
+    Key = api_key(maps:get(api_key, Options, undefined)),
     case maps:is_key(http, Options) of
         false -> vpndetection_http:ensure_ready();
         true -> ok
     end,
     #{
         base_url => trim_slashes(bin(maps:get(base_url, Options, ?DEFAULT_BASE_URL))),
-        api_key => api_key(Options),
+        api_key => Key,
         cache => cache(maps:get(cache, Options, #{})),
         concurrency => maps:get(concurrency, Options, ?DEFAULT_CONCURRENCY),
-        retries => maps:get(retries, Options, ?DEFAULT_RETRIES),
+        retries => Retries,
         timeout_ms => TimeoutMs,
         user_agent => user_agent(),
         http => maps:get(http, Options, vpndetection_http:httpc_fun())
@@ -182,7 +198,7 @@ my_ip(Client) ->
 my_ip(Client, Options) ->
     checked(Options, fun() ->
         Retries = maps:get(retries, Options, maps:get(retries, Client)),
-        case vpndetection_http:get_json(bound(Client, Options), <<"/myip">>, [], Retries) of
+        case vpndetection_http:get_json(bound(Client, Options), <<"/myip">>, [], Retries, ?LOOKUP) of
             {ok, Body} -> {ok, vpndetection_result:from_wire(Body)};
             {error, Error} -> {error, Error}
         end
@@ -213,7 +229,8 @@ my_entitlement(Client) ->
 my_entitlement(Client, Options) ->
     checked(Options, fun() ->
         Retries = maps:get(retries, Options, maps:get(retries, Client)),
-        vpndetection_http:get_json(bound(Client, Options), <<"/api/v1/entitlement">>, [], Retries)
+        Required = {whole, [<<"org_id">>, <<"apikey">>, <<"plan">>, <<"usage">>]},
+        vpndetection_http:get_json(bound(Client, Options), <<"/api/v1/entitlement">>, [], Retries, Required)
     end).
 
 -spec lookup_batch(client(), [binary() | string()]) ->
@@ -244,8 +261,9 @@ lookup_batch(Client, Ips, Options) ->
     %% An IPv4-mapped address is sent as the address it carries, once however
     %% many of its spellings were asked, and answered under each one asked.
     Unique = lists:uniq([vpndetection_bogon:unmapped(Ip) || Ip <- Asked]),
-    case {maps:get(concurrency, Options, maps:get(concurrency, Client)), check_timeout(Options)} of
-        %% A timeout no attempt can meet fails every address the same way, before any request.
+    case {maps:get(concurrency, Options, maps:get(concurrency, Client)), check_options(Options)} of
+        %% A timeout no attempt can meet, or retries that are no count, fail every
+        %% address the same way, before any request.
         {_, {error, Error}} ->
             maps:from_list([{Ip, {error, Error}} || Ip <- Asked]);
         {Concurrency, ok} when is_integer(Concurrency), Concurrency >= 1 ->
@@ -288,13 +306,14 @@ license_types() ->
 %% and would otherwise fill the atom table.
 -spec database_list(client()) -> {ok, [map()]} | {error, vpndetection_error:error()}.
 database_list(Client) ->
-    unwrap(get_json(Client, <<"/api/v1/database/list">>, []), <<"databases">>).
+    get_json(Client, <<"/api/v1/database/list">>, [], {<<"databases">>, list}).
 
 %% @doc What is inside one dataset: schema, samples, row count, sizes.
 -spec database_metadata(client(), binary() | string()) ->
     {ok, map()} | {error, vpndetection_error:error()}.
 database_metadata(Client, Id) ->
-    get_json(Client, <<"/api/v1/database/metadata">>, [{<<"id">>, bin(Id)}]).
+    Required = {whole, [<<"id">>, <<"updated">>, <<"entries">>, <<"schema">>]},
+    get_json(Client, <<"/api/v1/database/metadata">>, [{<<"id">>, bin(Id)}], Required).
 
 %% @doc Every digest published for one dataset file.
 %%
@@ -306,7 +325,7 @@ database_checksums(Client, Id, Format) ->
     case format_name(Format) of
         {ok, Name} ->
             Query = [{<<"id">>, bin(Id)}, {<<"format">>, Name}],
-            unwrap(get_json(Client, <<"/api/v1/database/checksum">>, Query), <<"checksums">>);
+            get_json(Client, <<"/api/v1/database/checksum">>, Query, {<<"checksums">>, map});
         {error, Error} ->
             {error, Error}
     end.
@@ -329,8 +348,7 @@ database_downloads(Client, Options) ->
         error -> []
     end,
     checked(Options, fun() ->
-        unwrap(get_json(bound(Client, Options), <<"/api/v1/database/downloads">>, Query),
-               <<"downloads">>)
+        get_json(bound(Client, Options), <<"/api/v1/database/downloads">>, Query, {<<"downloads">>, list})
     end).
 
 %% @doc The time-limited URL for one dataset file.
@@ -641,7 +659,7 @@ leading(Cache, Led, Send) ->
 fetch(Client, Addr, Options) ->
     Path = <<"/", (vpndetection_http:escape(Addr))/binary>>,
     Retries = maps:get(retries, Options, maps:get(retries, Client)),
-    case vpndetection_http:get_json(bound(Client, Options), Path, [], Retries) of
+    case vpndetection_http:get_json(bound(Client, Options), Path, [], Retries, ?LOOKUP) of
         {ok, Body} -> {ok, vpndetection_result:from_wire(Body)};
         {error, Error} -> {error, Error}
     end.
@@ -744,7 +762,7 @@ chunk(List, Size) ->
 lookup_chunk(Client, Chunk, Options) ->
     Retries = maps:get(retries, Options, maps:get(retries, Client)),
     Body = iolist_to_binary(json:encode(#{<<"ips">> => Chunk})),
-    case vpndetection_http:post_json(bound(Client, Options), <<"/batch">>, Body, Retries) of
+    case vpndetection_http:post_json(bound(Client, Options), <<"/batch">>, Body, Retries, chunk) of
         {ok, Answer} ->
             Results = object(maps:get(<<"results">>, Answer, #{})),
             Errors = object(maps:get(<<"errors">>, Answer, #{})),
@@ -771,37 +789,45 @@ batch_answer(Ip, Results, Errors) ->
                       message => <<"the batch answer did not include ", Ip/binary>>}}
     end.
 
-get_json(Client, Path, Query) ->
-    vpndetection_http:get_json(Client, Path, Query, maps:get(retries, Client)).
+get_json(Client, Path, Query, Member) ->
+    vpndetection_http:get_json(Client, Path, Query, maps:get(retries, Client), Member).
 
 %% The client with this call's `timeout_ms' in place of its own, which is the one
 %% the transport reads for every request it builds.
 bound(Client, Options) ->
     Client#{timeout_ms := maps:get(timeout_ms, Options, maps:get(timeout_ms, Client))}.
 
-%% A call with a timeout no attempt can meet is refused before any request:
-%% httpc fails a call at once on zero, runs it with no bound on a value it
-%% ignores, and raises in the caller past ?MAX_TIMEOUT_MS.
+%% A call with a timeout no attempt can meet, or retries that are no count, is
+%% refused before any request: httpc fails a call at once on zero, runs it with
+%% no bound on a value it ignores, and raises in the caller past ?MAX_TIMEOUT_MS;
+%% and Erlang orders every atom above every number, so `infinity' retries would
+%% retry an outage for ever.
 checked(Options, Call) ->
-    case check_timeout(Options) of
+    case check_options(Options) of
         ok -> Call();
         {error, Error} -> {error, Error}
     end.
 
-check_timeout(#{timeout_ms := TimeoutMs}) ->
-    case valid_timeout(TimeoutMs) of
-        true ->
+check_options(Options) ->
+    TimeoutMs = maps:get(timeout_ms, Options, infinity),
+    Retries = maps:get(retries, Options, 0),
+    case {valid_timeout(TimeoutMs), valid_retries(Retries)} of
+        {true, true} ->
             ok;
-        false ->
-            Message = io_lib:format("timeout_ms must be infinity or an integer from 1 to ~b, not ~p",
-                                    [?MAX_TIMEOUT_MS, TimeoutMs]),
-            {error, #{kind => bad_request, retryable => false, message => iolist_to_binary(Message)}}
-    end;
-check_timeout(_Options) ->
-    ok.
+        {false, _} ->
+            refused(io_lib:format("timeout_ms must be infinity or an integer from 1 to ~b, not ~p",
+                                  [?MAX_TIMEOUT_MS, TimeoutMs]));
+        {true, false} ->
+            refused(io_lib:format("retries must be an integer of 0 or more, not ~p", [Retries]))
+    end.
+
+refused(Message) ->
+    {error, #{kind => bad_request, retryable => false, message => iolist_to_binary(Message)}}.
 
 valid_timeout(infinity) -> true;
 valid_timeout(Ms) -> is_integer(Ms) andalso Ms >= 1 andalso Ms =< ?MAX_TIMEOUT_MS.
+
+valid_retries(Retries) -> is_integer(Retries) andalso Retries >= 0.
 
 %% Every one, not only the last: each path appended starts with its own `/', and
 %% `//api/...' is another path, one the API answers with a redirect.
@@ -826,15 +852,6 @@ format_name(Format) ->
                       message => iolist_to_binary(Message)}}
     end.
 
-unwrap({ok, Body}, Key) ->
-    case Body of
-        #{Key := Value} -> {ok, Value};
-        _ -> {error, #{kind => server_error, retryable => false,
-                       message => <<"response did not carry a \"", Key/binary, "\" member">>}}
-    end;
-unwrap({error, Error}, _Key) ->
-    {error, Error}.
-
 cache(false) ->
     undefined;
 cache(Options) ->
@@ -842,13 +859,35 @@ cache(Options) ->
                                                 maps:get(ttl_ms, Options, ?DEFAULT_CACHE_TTL_MS)),
     Cache.
 
-api_key(Options) ->
-    case maps:get(api_key, Options, undefined) of
-        undefined -> undefined;
-        Key -> bin(Key)
+%% Blank counts as absent: it is what an unset `${{ secrets.X }}' interpolates
+%% to, as `false' is what `os:getenv/1' answers for an unset variable, and sent,
+%% `Bearer' with nothing after it reads as a wrong key rather than as none. httpc
+%% writes a header value out as given, so a control character left inside would
+%% reach the wire with every call, and a CR LF would start a header of its own. A
+%% key read from a file ends with a newline, which the trim takes.
+api_key(Key) when Key =:= undefined; Key =:= false ->
+    undefined;
+api_key(Key) ->
+    Trimmed = trim_blank(bin(Key)),
+    case {Trimmed, lists:any(fun(C) -> C < 32 orelse C =:= 127 end, binary_to_list(Trimmed))} of
+        {<<>>, _} -> undefined;
+        {_, false} -> Trimmed;
+        {_, true} -> erlang:error({badarg, {api_key, control_character}})
     end.
 
+trim_blank(<<C, Rest/binary>>) when C =:= $\s; C >= $\t, C =< $\r ->
+    trim_blank(Rest);
+trim_blank(Value) ->
+    Size = byte_size(Value),
+    case Size > 0 andalso binary:last(Value) of
+        C when C =:= $\s; C >= $\t, C =< $\r -> trim_blank(binary:part(Value, 0, Size - 1));
+        _ -> Value
+    end.
+
+%% Loaded first: a library is seldom started, and an application that is not
+%% loaded has no `vsn' to read.
 user_agent() ->
+    _ = application:load(vpndetection),
     Version = case application:get_key(vpndetection, vsn) of
         {ok, Vsn} -> list_to_binary(Vsn);
         undefined -> <<"dev">>

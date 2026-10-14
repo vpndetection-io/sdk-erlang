@@ -240,7 +240,9 @@ bound(Client, Options) ->
 
 %% Only the declared members are read, each checked against its type, so an
 %% absent member stays absent and an empty `scope' stays an empty binary. A 2xx
-%% that is not its type is the server's fault, and says so with its status.
+%% that is not its type is the server's fault, and says so with its status: the
+%% ordinary server error, retried where the call takes the client's retries
+%% (discovery and device authorization) and sent once where it takes none.
 decoder(Members) ->
     fun(Status, Body) ->
         try json:decode(Body) of
@@ -272,7 +274,7 @@ typed(boolean, Value) -> is_boolean(Value);
 typed(strings, Value) -> is_list(Value) andalso lists:all(fun erlang:is_binary/1, Value).
 
 malformed(Status, Message) ->
-    #{kind => server_error, retryable => false, status => Status, message => Message}.
+    #{kind => server_error, retryable => true, status => Status, message => Message}.
 
 -ifdef(TEST).
 %% A test replaces the poll's wait and its monotonic clock together.

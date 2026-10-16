@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.5.3 - 2026-10-16
+
+### Fixes
+
+- Re-pin the spec to 2026.10.15: descriptions in US spelling ([`6d88e6e`](https://github.com/vpndetection-io/sdk-erlang/commit/6d88e6ec3af069038057dd9294d5690ca46d99f6))
+
 ## 3.5.2 - 2026-10-14
 
 ### Fixes

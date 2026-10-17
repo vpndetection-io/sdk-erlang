@@ -38,7 +38,7 @@ Client = vpndetection:new(#{api_key => <<"your-api-key">>}),
 
 {ok, Result} = vpndetection:lookup(Client, <<"45.83.91.1">>),
 maps:get(is_vpn, Result).                        % true
-maps:get(provider, maps:get(vpn, Result)).       % <<"mullvad">>
+maps:get(provider, maps:get(vpn, Result)).       % <<"nordvpn">>
 maps:get(is_hosting, Result).                    % true
 maps:get(provider, maps:get(hosting, Result)).   % <<"M247">>
 ```

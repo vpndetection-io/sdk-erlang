@@ -2,6 +2,17 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.6.0 - 2026-10-17
+
+### Features
+
+- Re-pin the spec to 2026.10.16: dynamic client registration ([`2669838`](https://github.com/vpndetection-io/sdk-erlang/commit/2669838eb06790b0ad00a1afc7c685e87814869b))
+
+### Fixes
+
+- Take a nil key and an address tuple, and end the cache with its owner ([`8425619`](https://github.com/vpndetection-io/sdk-erlang/commit/84256199ef1810333a19144de8511ee600ec6d98))
+- Middleware: warn on a nil key, and name only the ip_selector for a proxy ([`09121a4`](https://github.com/vpndetection-io/sdk-erlang/commit/09121a4ea124f65e3067026efd033a39c791daeb))
+
 ## 3.5.3 - 2026-10-16
 
 ### Fixes

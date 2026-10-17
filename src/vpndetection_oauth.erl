@@ -28,6 +28,7 @@
     token_endpoint_auth_methods_supported => [binary()],
     authorization_response_iss_parameter_supported => boolean(),
     client_id_metadata_document_supported => boolean(),
+    registration_endpoint => binary(),
     service_documentation => binary()
 }.
 
@@ -69,6 +70,7 @@
     {<<"authorization_response_iss_parameter_supported">>, authorization_response_iss_parameter_supported,
      boolean, false},
     {<<"client_id_metadata_document_supported">>, client_id_metadata_document_supported, boolean, false},
+    {<<"registration_endpoint">>, registration_endpoint, string, false},
     {<<"service_documentation">>, service_documentation, string, false}
 ]).
 -define(DEVICE_AUTHORIZATION, [

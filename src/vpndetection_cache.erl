@@ -35,16 +35,19 @@
                 %% Each address in the air: who leads it, and who awaits it under which ref.
                 flights = #{} :: #{binary() => {pid(), [{pid(), reference()}]}},
                 %% Each leader's monitor and the addresses it leads.
-                leaders = #{} :: #{pid() => {reference(), #{binary() => true}}}}).
+                leaders = #{} :: #{pid() => {reference(), #{binary() => true}}},
+                %% The monitor on the process that built the client.
+                owner :: reference()}).
 
 %% @doc Start a cache holding at most `Max' addresses for `TtlMs' each.
 %%
-%% Linked, so a cache cannot outlive the process that built the client and leak
-%% a process plus two ETS tables that nothing will ever collect. Build clients
-%% in something long lived, and call `vpndetection:close/1' when done.
+%% Linked, and monitoring the process that built the client, so a cache cannot
+%% outlive it and leak a process plus two ETS tables that nothing will ever
+%% collect: the link alone ends it only on an abnormal exit. Build clients in
+%% something long lived, and call `vpndetection:close/1' when done.
 -spec start_link(pos_integer(), pos_integer()) -> {ok, cache()}.
 start_link(Max, TtlMs) ->
-    {ok, Pid} = gen_server:start_link(?MODULE, {Max, TtlMs}, []),
+    {ok, Pid} = gen_server:start_link(?MODULE, {Max, TtlMs, self()}, []),
     Entries = gen_server:call(Pid, entries),
     {ok, #{pid => Pid, entries => Entries}}.
 
@@ -137,10 +140,11 @@ await_each(Ref, Monitor, Left, Acc) ->
             maps:merge(Acc, maps:map(fun(_Ip, true) -> retry end, Left))
     end.
 
-init({Max, TtlMs}) ->
+init({Max, TtlMs, Owner}) ->
     Entries = ets:new(vpndetection_cache_entries, [set, public, {read_concurrency, true}]),
     Order = ets:new(vpndetection_cache_order, [ordered_set, private]),
-    {ok, #state{entries = Entries, order = Order, max = Max, ttl_ms = TtlMs}}.
+    {ok, #state{entries = Entries, order = Order, max = Max, ttl_ms = TtlMs,
+                owner = erlang:monitor(process, Owner)}}.
 
 handle_call(entries, _From, State) ->
     {reply, State#state.entries, State};
@@ -162,6 +166,8 @@ handle_cast({drop, Ip}, State) ->
     ets:delete(State#state.entries, Ip),
     {noreply, State}.
 
+handle_info({'DOWN', Owner, process, _, _Reason}, State = #state{owner = Owner}) ->
+    {stop, normal, State};
 %% A leader that died mid-request lands nothing, so its waiters ask again.
 handle_info({'DOWN', _Monitor, process, Pid, _Reason}, State) ->
     case State#state.leaders of

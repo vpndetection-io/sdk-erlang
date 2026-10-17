@@ -26,8 +26,8 @@
 -export([oauth_authorization_url/4, oauth_authorization_url/5, oauth_exchange_authorization_code/5,
          oauth_exchange_authorization_code/6, oauth_create_pkce/0, oauth_pkce_challenge/1]).
 
--export_type([client/0, options/0, lookup_options/0, batch_options/0, downloads_options/0,
-              format/0]).
+-export_type([client/0, options/0, address/0, lookup_options/0, batch_options/0,
+              downloads_options/0, format/0]).
 -export_type([oauth_options/0, device_authorization_options/0, authorization_url_options/0]).
 
 -define(DEFAULT_BASE_URL, <<"https://api.vpndetection.io">>).
@@ -58,7 +58,7 @@
 }.
 
 -type options() :: #{
-    api_key => binary() | string() | false,
+    api_key => binary() | string() | false | nil,
     base_url => binary() | string(),
     cache => #{max => pos_integer(), ttl_ms => pos_integer()} | false,
     concurrency => pos_integer(),
@@ -67,6 +67,8 @@
     http => vpndetection_http:http_fun()
 }.
 
+%% An address as text, or as the tuple `inet' and Cowboy hand one over as.
+-type address() :: binary() | string() | inet:ip_address().
 -type lookup_options() :: #{retries => non_neg_integer(), timeout_ms => pos_integer() | infinity}.
 -type batch_options() :: #{retries => non_neg_integer(), concurrency => pos_integer(),
                            timeout_ms => pos_integer() | infinity}.
@@ -90,8 +92,9 @@ new() ->
 %%
 %% `api_key' is optional: without one you get the free tier, which answers `ip'
 %% and `is_vpn' and allows 1000 requests per day per source address. An empty or
-%% blank key is no key, and so is `false', which is what `os:getenv/1' answers
-%% for a variable that is not set. The key is trimmed, so one read from a file
+%% blank key is no key, and so are `false', which is what `os:getenv/1' answers
+%% for a variable that is not set, and `nil', Elixir's `System.get_env/1' answer
+%% for one. The key is trimmed, so one read from a file
 %% with its newline works; one still holding a control character raises
 %% `{badarg, {api_key, control_character}}', naming the cause and not the key.
 %%
@@ -101,8 +104,9 @@ new() ->
 %%
 %% The cache is per client and never shared, because two clients holding
 %% different keys are on different plans and so entitled to different fields.
-%% Unless `cache' is `false' this starts a process linked to the caller, so build
-%% clients somewhere long lived and `close/1' them when you are done.
+%% Unless `cache' is `false' this starts a process linked to the caller, which
+%% ends when the caller does, so build clients somewhere long lived and `close/1'
+%% them when you are done.
 -spec new(options()) -> client().
 new(Options) ->
     TimeoutMs = maps:get(timeout_ms, Options, ?DEFAULT_TIMEOUT_MS),
@@ -153,25 +157,26 @@ is_bogon(Ip) ->
 is_bogon(_Client, Ip) ->
     vpndetection_bogon:is_bogon(Ip).
 
--spec lookup(client(), binary() | string()) ->
+-spec lookup(client(), address()) ->
     {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}.
 lookup(Client, Ip) ->
     lookup(Client, Ip, #{}).
 
 %% @doc Classify one address.
 %%
-%% A bogon is answered locally and never reaches the network. Everything else is
+%% `Ip' is text, or a tuple as `inet:peername/1' and Cowboy's `peer' give it. A
+%% bogon is answered locally and never reaches the network. Everything else is
 %% served, then cached for this client alone.
 %%
 %% `Options' overrides the client's `retries' and `timeout_ms' for this call
 %% alone. `timeout_ms' bounds each attempt, so a retried call can take longer in
 %% total.
--spec lookup(client(), binary() | string(), lookup_options()) ->
+-spec lookup(client(), address(), lookup_options()) ->
     {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}.
 lookup(Client, Ip, Options) ->
     checked(Options, fun() ->
         %% Judged, cached and sent as the IPv4 address it carries, if it is mapped.
-        Addr = vpndetection_bogon:unmapped(bin(Ip)),
+        Addr = vpndetection_bogon:unmapped(address(Ip)),
         case vpndetection_bogon:is_bogon(Addr) of
             true -> {ok, vpndetection_result:bogon(Addr)};
             false -> served(Client, Addr, Options)
@@ -233,7 +238,7 @@ my_entitlement(Client, Options) ->
         vpndetection_http:get_json(bound(Client, Options), <<"/api/v1/entitlement">>, [], Retries, Required)
     end).
 
--spec lookup_batch(client(), [binary() | string()]) ->
+-spec lookup_batch(client(), [address()]) ->
     #{binary() => {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}}.
 lookup_batch(Client, Ips) ->
     lookup_batch(Client, Ips, #{}).
@@ -249,15 +254,15 @@ lookup_batch(Client, Ips) ->
 %% reports a per-entry failure with the status the single lookup would have
 %% answered, and a chunk that fails as a whole marks every address in it.
 %% Erlang maps have no insertion order, so the result is a set of keys rather
-%% than a sequence.
+%% than a sequence. An address given as a tuple is keyed by its text.
 %%
 %% `concurrency', `retries' and `timeout_ms' are overridable here, per call, so
 %% one large batch does not need a second client built to widen it. There is no
 %% cap on how many addresses one call takes; chunking them is this function's job.
--spec lookup_batch(client(), [binary() | string()], batch_options()) ->
+-spec lookup_batch(client(), [address()], batch_options()) ->
     #{binary() => {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}}.
 lookup_batch(Client, Ips, Options) ->
-    Asked = lists:uniq([bin(Ip) || Ip <- Ips]),
+    Asked = lists:uniq([address(Ip) || Ip <- Ips]),
     %% An IPv4-mapped address is sent as the address it carries, once however
     %% many of its spellings were asked, and answered under each one asked.
     Unique = lists:uniq([vpndetection_bogon:unmapped(Ip) || Ip <- Asked]),
@@ -865,7 +870,7 @@ cache(Options) ->
 %% writes a header value out as given, so a control character left inside would
 %% reach the wire with every call, and a CR LF would start a header of its own. A
 %% key read from a file ends with a newline, which the trim takes.
-api_key(Key) when Key =:= undefined; Key =:= false ->
+api_key(Key) when Key =:= undefined; Key =:= false; Key =:= nil ->
     undefined;
 api_key(Key) ->
     Trimmed = trim_blank(bin(Key)),
@@ -896,3 +901,13 @@ user_agent() ->
 
 bin(Value) when is_binary(Value) -> Value;
 bin(Value) when is_list(Value) -> list_to_binary(Value).
+
+%% A tuple that is no address raises `badarg' naming it, as a malformed option
+%% does in `new/1'.
+address(Ip) when is_tuple(Ip) ->
+    case inet:ntoa(Ip) of
+        {error, einval} -> erlang:error({badarg, {ip, Ip}});
+        Text -> list_to_binary(Text)
+    end;
+address(Ip) ->
+    bin(Ip).

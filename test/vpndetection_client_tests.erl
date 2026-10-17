@@ -690,12 +690,57 @@ assert_backoff_used(RetryAfter) ->
 
     ?assertEqual({{ok, []}, 2}, {Answer, counters:get(Served, 1)}).
 
-%% A blank key is what an unset secret interpolates to, and `false' what
-%% `os:getenv/1' answers for an unset variable; `Bearer' with a blank behind it
-%% reads as a wrong key rather than as none.
+%% A blank key is what an unset secret interpolates to, `false' what
+%% `os:getenv/1' answers for an unset variable, and `nil' what Elixir's
+%% `System.get_env/1' does; `Bearer' with a blank behind it reads as a wrong key
+%% rather than as none.
 a_blank_or_unset_key_sends_no_authorization_header_test() ->
     [?assertEqual({Key, false}, {Key, lists:keyfind(<<"authorization">>, 1, headers_sent(Key))})
-     || Key <- [<<"   ">>, <<"\t">>, " \r\n ", "", <<>>, false]].
+     || Key <- [<<"   ">>, <<"\t">>, " \r\n ", "", <<>>, false, nil]].
+
+%% `inet:peername/1' and Cowboy's `peer' give an address as a tuple, which
+%% crashed `lookup/2' with `function_clause' until 3.6.0.
+an_address_given_as_a_tuple_is_looked_up_as_its_text_test() ->
+    Parent = self(),
+    Http = fun(#{url := Url}) ->
+        Parent ! {url, Url},
+        Ip = uri_string:percent_decode(lists:last(binary:split(Url, <<"/">>, [global]))),
+        {ok, #{status => 200, headers => [],
+               body => <<"{\"ip\":\"", Ip/binary, "\",\"is_vpn\":false}">>}}
+    end,
+    Client = vpndetection:new(#{http => Http, cache => false}),
+    Sent = fun() -> receive {url, Url} -> uri_string:percent_decode(lists:last(binary:split(Url, <<"/">>, [global])))
+                    after 1000 -> nothing_sent end end,
+    {ok, _} = vpndetection:lookup(Client, {45, 83, 91, 1}),
+    ?assertEqual(<<"45.83.91.1">>, Sent()),
+    {ok, _} = vpndetection:lookup(Client, {16#2606, 16#4700, 16#4700, 0, 0, 0, 0, 16#1111}),
+    ?assertEqual(<<"2606:4700:4700::1111">>, Sent()),
+    %% A bogon tuple is answered locally, as its text is.
+    {ok, Bogon} = vpndetection:lookup(Client, {10, 0, 0, 1}),
+    ?assertEqual(<<"10.0.0.1">>, maps:get(ip, Bogon)),
+    ?assertEqual(nothing_sent, Sent()),
+    ?assertEqual([<<"10.0.0.1">>, <<"45.83.91.1">>],
+                 lists:sort(maps:keys(vpndetection:lookup_batch(Client, [{45, 83, 91, 1}, {10, 0, 0, 1}])))),
+    [?assertError({badarg, {ip, Bad}}, vpndetection:lookup(Client, Bad))
+     || Bad <- [{1, 2, 3}, {256, 0, 0, 1}, {-1, 0, 0, 1}]].
+
+%% A linked process ends with an exiting owner only on an abnormal exit, so a
+%% client built per request in a plain process leaked its cache and two ETS
+%% tables every time until 3.6.0.
+a_cache_ends_with_the_process_that_built_it_test() ->
+    Parent = self(),
+    [begin
+         Owner = spawn(fun() ->
+             Parent ! {client, vpndetection:new(#{http => fun(_) -> {error, unused} end})},
+             receive go -> exit(Reason) end
+         end),
+         Client = receive {client, C} -> C after 1000 -> error(no_client) end,
+         #{cache := #{pid := Cache}} = Client,
+         Monitor = erlang:monitor(process, Cache),
+         Owner ! go,
+         ?assertEqual({Reason, down}, {Reason, receive {'DOWN', Monitor, process, Cache, _} -> down
+                                                after 1000 -> still_running end})
+     end || Reason <- [normal, shutdown, kill]].
 
 %% A key read from a file ends with a newline; the blanks around a key are no
 %% part of it.

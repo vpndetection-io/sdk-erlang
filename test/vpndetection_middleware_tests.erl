@@ -204,6 +204,16 @@ an_unset_key_builds_a_keyless_client_and_warns_once_test() ->
     ?assertEqual([], seen(Quiet)),
     vpndetection_middleware:close(Keyed).
 
+%% Elixir's `System.get_env/1' answers `nil' instead, which crashed the core's
+%% client until 3.6.0 and so the application that started it.
+a_nil_key_builds_a_keyless_client_and_warns_once_test() ->
+    Warnings = collector(),
+    {ok, Core} = vpndetection_middleware:new(#{api_key => nil, on_warn => sink(Warnings)}),
+    ?assertEqual(undefined, maps:get(api_key, maps:get(client, Core))),
+    ?assertMatch([_], seen(Warnings)),
+    ?assertNotEqual(nomatch, binary:match(hd(seen(Warnings)), <<"System.get_env/1">>)),
+    vpndetection_middleware:close(Core).
+
 serving(Body, Options) ->
     Stub = vpndetection_stub:start(
         #{?PUBLIC_IP => #{status => 200, body => Body#{<<"ip">> => ?PUBLIC_IP}}}

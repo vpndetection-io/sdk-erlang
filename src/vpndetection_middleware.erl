@@ -25,7 +25,7 @@
     %% be on different plans and entitled to different fields. A client passed
     %% in is NOT closed by close/1.
     client => vpndetection:client(),
-    api_key => binary() | string() | false,
+    api_key => binary() | string() | false | nil,
     base_url => binary() | string(),
     %% How long a lookup may hold the request. Ignored when `client' is set.
     timeout_ms => pos_integer(),
@@ -200,8 +200,8 @@ maybe_warn_bogon(Core, Ip) ->
                 "resolved the client address as ",
                 Ip/binary,
                 ", which is not a public address. If this application runs behind a proxy or "
-                "load balancer, configure its trusted-proxy setting or pass an ip_selector "
-                "that reads your edge's header."
+                "load balancer, pass an ip_selector that reads the address your edge forwards: "
+                "the socket peer is the proxy's own."
             >>)
     end.
 
@@ -232,6 +232,11 @@ unset_key(#{client := _}, _OnWarn) ->
 unset_key(#{api_key := false}, OnWarn) ->
     _ = OnWarn(<<"api_key is false, which os:getenv/1 answers for an unset variable, so every lookup "
                  "goes out with no key, on the free allowance of 1000 a day per source address">>),
+    ok;
+unset_key(#{api_key := nil}, OnWarn) ->
+    _ = OnWarn(<<"api_key is nil, which Elixir's System.get_env/1 answers for an unset variable, so "
+                 "every lookup goes out with no key, on the free allowance of 1000 a day per source "
+                 "address">>),
     ok;
 unset_key(_Options, _OnWarn) ->
     ok.

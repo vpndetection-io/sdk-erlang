@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.7.0 - 2026-10-18
+
+### Features
+
+- Re-pin the spec to 2026.10.18: is_pubproxy and the pubproxy detail ([`43c4c0a`](https://github.com/vpndetection-io/sdk-erlang/commit/43c4c0a7cec9ac5bf2bfa7559f5bdf38a82ba313))
+- Add a selector for the PROXY protocol's source address ([`d8f2498`](https://github.com/vpndetection-io/sdk-erlang/commit/d8f2498b00398a59f00ebd4d0bb19a7f1a1ec276))
+
 ## 3.6.0 - 2026-10-17
 
 ### Features

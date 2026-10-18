@@ -102,7 +102,7 @@ assert_shape(#{<<"body">> := Body, <<"status">> := Status, <<"expect">> := Expec
      || K <- maps:get(<<"absent">>, Expect, [])],
     [?assertEqual({K, #{}}, {K, maps:get(atom(K), Result, missing)})
      || K <- maps:get(<<"emptyPresent">>, Expect, [])],
-    [assert_detail(Obj, Expect, Result) || Obj <- [<<"vpn">>, <<"hosting">>, <<"dcproxy">>]],
+    [assert_detail(Obj, Expect, Result) || Obj <- [<<"vpn">>, <<"hosting">>, <<"dcproxy">>, <<"pubproxy">>]],
     vpndetection:close(Client),
     vpndetection_stub:stop(Stub).
 

@@ -29,6 +29,7 @@
     is_resproxy => boolean(),
     is_dcproxy => boolean(),
     is_mobproxy => boolean(),
+    is_pubproxy => boolean(),
     vpn => detail(),
     hosting => detail(),
     relay => detail(),
@@ -36,7 +37,8 @@
     cdn => detail(),
     resproxy => detail(),
     dcproxy => detail(),
-    mobproxy => detail()
+    mobproxy => detail(),
+    pubproxy => detail()
 }.
 
 -type detail() :: #{
@@ -47,7 +49,11 @@
     last_seen => binary(),
     hits => integer(),
     hits_days_pct => integer(),
-    providers_num => integer()
+    providers_num => integer(),
+    entry => boolean(),
+    exit => boolean(),
+    protocols => [binary()],
+    last_usable => binary()
 }.
 
 %% @doc Translate a decoded response body into a result.
@@ -81,6 +87,7 @@ bogon(Ip) ->
         <<"is_resproxy">> => false,
         <<"is_dcproxy">> => false,
         <<"is_mobproxy">> => false,
+        <<"is_pubproxy">> => false,
         <<"vpn">> => #{},
         <<"hosting">> => #{},
         <<"relay">> => #{},
@@ -88,7 +95,8 @@ bogon(Ip) ->
         <<"cdn">> => #{},
         <<"resproxy">> => #{},
         <<"dcproxy">> => #{},
-        <<"mobproxy">> => #{}
+        <<"mobproxy">> => #{},
+        <<"pubproxy">> => #{}
     },
     (from_wire(Wire))#{is_bogon => true}.
 
@@ -113,6 +121,7 @@ key(<<"is_cdn">>) -> is_cdn;
 key(<<"is_resproxy">>) -> is_resproxy;
 key(<<"is_dcproxy">>) -> is_dcproxy;
 key(<<"is_mobproxy">>) -> is_mobproxy;
+key(<<"is_pubproxy">>) -> is_pubproxy;
 key(<<"vpn">>) -> vpn;
 key(<<"hosting">>) -> hosting;
 key(<<"relay">>) -> relay;
@@ -121,6 +130,7 @@ key(<<"cdn">>) -> cdn;
 key(<<"resproxy">>) -> resproxy;
 key(<<"dcproxy">>) -> dcproxy;
 key(<<"mobproxy">>) -> mobproxy;
+key(<<"pubproxy">>) -> pubproxy;
 key(<<"provider">>) -> provider;
 key(<<"confidence">>) -> confidence;
 key(<<"method">>) -> method;
@@ -129,4 +139,8 @@ key(<<"last_seen">>) -> last_seen;
 key(<<"hits">>) -> hits;
 key(<<"hits_days_pct">>) -> hits_days_pct;
 key(<<"providers_num">>) -> providers_num;
+key(<<"entry">>) -> entry;
+key(<<"exit">>) -> exit;
+key(<<"protocols">>) -> protocols;
+key(<<"last_usable">>) -> last_usable;
 key(Other) -> Other.

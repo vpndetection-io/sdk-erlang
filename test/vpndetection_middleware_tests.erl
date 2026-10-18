@@ -230,6 +230,31 @@ core(Stub, Options) ->
 fixed(Ip) ->
     fun(_View) -> Ip end.
 
+%% A PROXY header is the connecting peer's word, so only a trusted balancer's is
+%% read: from anywhere else, or with no source in it, the socket peer answers.
+proxy_protocol_reads_the_header_only_from_a_trusted_balancer_test() ->
+    Via = fun(Peer, Source) ->
+        (view(Peer, #{}))#{proxy_address => fun() -> Source end}
+    end,
+    Selector = vpndetection_selectors:proxy_protocol([<<"10.0.0.0/8">>, "192.0.2.7", <<"2001:db8::/32">>]),
+    ?assertEqual(<<"45.83.91.1">>, run(Selector, Via(<<"10.1.2.3">>, <<"45.83.91.1">>))),
+    ?assertEqual(<<"45.83.91.1">>, run(Selector, Via(<<"192.0.2.7">>, <<"45.83.91.1">>))),
+    ?assertEqual(<<"45.83.91.1">>, run(Selector, Via(<<"2001:db8::5">>, <<"45.83.91.1">>))),
+    ?assertEqual(<<"45.83.91.1">>, run(Selector, Via(<<"::ffff:10.0.0.9">>, <<"45.83.91.1">>))),
+    %% A forged header from a peer that is no balancer of yours.
+    ?assertEqual(<<"203.0.113.9">>, run(Selector, Via(<<"203.0.113.9">>, <<"45.83.91.1">>))),
+    ?assertEqual(<<"192.0.2.8">>, run(Selector, Via(<<"192.0.2.8">>, <<"45.83.91.1">>))),
+    ?assertEqual(<<"11.0.0.1">>, run(Selector, Via(<<"11.0.0.1">>, <<"45.83.91.1">>))),
+    %% A balancer's own health check carries no source; a framework with no
+    %% PROXY support has no member to read.
+    ?assertEqual(<<"10.1.2.3">>, run(Selector, Via(<<"10.1.2.3">>, undefined))),
+    ?assertEqual(<<"10.1.2.3">>, run(Selector, view(<<"10.1.2.3">>, #{}))),
+    ?assertEqual(<<"10.1.2.3">>, run(vpndetection_selectors:proxy_protocol([]),
+                                     Via(<<"10.1.2.3">>, <<"45.83.91.1">>))),
+    [?assertError({badarg, {trusted, Bad}}, vpndetection_selectors:proxy_protocol([Bad]))
+     || Bad <- [<<"10.0.0.0/33">>, <<"10.0.0.0/x">>, <<"not an address">>, <<"10.0.0">>,
+                <<"2001:db8::/129">>]].
+
 view(Ip, Headers) ->
     #{header => fun(Name) -> maps:get(string:lowercase(Name), Headers, undefined) end,
       framework_ip => fun() -> Ip end}.

@@ -114,7 +114,7 @@ trusted_range(Spec) ->
     {Address, Bits} =
         case binary:split(Bin, <<"/">>) of
             [A] -> {A, undefined};
-            [A, B] -> {A, catch binary_to_integer(B)}
+            [A, B] -> {A, prefix_bits(B)}
         end,
     case inet:parse_strict_address(binary_to_list(Address)) of
         {ok, Parsed} ->
@@ -128,6 +128,13 @@ trusted_range(Spec) ->
             {Width, Prefix, to_int(Parsed) bsr (Width - Prefix)};
         {error, _} ->
             error({badarg, {trusted, Spec}})
+    end.
+
+prefix_bits(Bits) ->
+    try
+        binary_to_integer(Bits)
+    catch
+        error:badarg -> invalid
     end.
 
 in_ranges(undefined, _Ranges) ->

@@ -53,6 +53,8 @@
     entry => boolean(),
     exit => boolean(),
     protocols => [binary()],
+    num_ports => integer(),
+    num_proxies => integer(),
     last_usable => binary()
 }.
 
@@ -142,5 +144,7 @@ key(<<"providers_num">>) -> providers_num;
 key(<<"entry">>) -> entry;
 key(<<"exit">>) -> exit;
 key(<<"protocols">>) -> protocols;
+key(<<"num_ports">>) -> num_ports;
+key(<<"num_proxies">>) -> num_proxies;
 key(<<"last_usable">>) -> last_usable;
 key(Other) -> Other.

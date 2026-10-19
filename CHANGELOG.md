@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.8.0 - 2026-10-19
+
+### Features
+
+- Re-pin the spec to 2026.10.19: num_ports and num_proxies in the pubproxy detail ([`6595868`](https://github.com/vpndetection-io/sdk-erlang/commit/6595868b1417e97afd3c363d7ea800b237155638))
+
 ## 3.7.0 - 2026-10-18
 
 ### Features

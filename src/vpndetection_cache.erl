@@ -17,7 +17,7 @@
 -module(vpndetection_cache).
 -behaviour(gen_server).
 
--export([start_link/2, stop/1, get/2, put/3]).
+-export([start_link/2, stop/1, alive/1, get/2, put/3]).
 -export([board/3, land/2, abandon/2, await/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -54,6 +54,12 @@ start_link(Max, TtlMs) ->
 -spec stop(cache()) -> ok.
 stop(#{pid := Pid}) ->
     gen_server:stop(Pid).
+
+%% @doc Whether the cache's owner is still running. One that has stopped answers
+%% every read as a miss, so each call goes to the API.
+-spec alive(cache()) -> boolean().
+alive(#{pid := Pid}) ->
+    is_process_alive(Pid).
 
 %% @doc Read an address, if it is held and still fresh.
 %%

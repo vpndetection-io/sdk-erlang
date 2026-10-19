@@ -111,6 +111,39 @@ a_private_client_address_warns_once_and_never_reaches_the_network_test() ->
     ?assertNotEqual(nomatch, binary:match(hd(seen(Warnings)), <<"not a public address">>)),
     vpndetection_stub:stop(Stub).
 
+%% A killed cache answers every read as a miss, so each request costs a lookup:
+%% through 3.8.0 nothing said so (a core built in `start/2' links its cache to the
+%% application master, which ignores the exit).
+a_dead_cache_warns_once_and_lookups_still_answer_test() ->
+    Stub = vpndetection_stub:start(
+        #{?PUBLIC_IP => #{status => 200, body => #{<<"ip">> => ?PUBLIC_IP, <<"is_vpn">> => true}}}
+    ),
+    Warnings = collector(),
+    %% The cache is linked to the process that built the client, as it is to the
+    %% application master, which traps exits and so outlives it.
+    Trapping = process_flag(trap_exit, true),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), retries => 0}),
+    {ok, Core} = vpndetection_middleware:new(#{client => Client, ip_selector => fixed(?PUBLIC_IP),
+                                               on_warn => sink(Warnings)}),
+    {ok, _} = vpndetection_middleware:evaluate(Core, view(undefined, #{})),
+    ?assertEqual([], seen(Warnings)),
+
+    #{cache := #{pid := Cache}} = Client,
+    Monitor = erlang:monitor(process, Cache),
+    exit(Cache, kill),
+    receive {'DOWN', Monitor, process, Cache, _} -> ok end,
+
+    [begin
+         {ok, Found} = vpndetection_middleware:evaluate(Core, view(undefined, #{})),
+         ?assertEqual(true, maps:get(is_vpn, maps:get(result, Found)))
+     end || _ <- [1, 2]],
+    ?assertEqual(3, vpndetection_stub:calls(Stub)),
+    ?assertMatch([_], seen(Warnings)),
+    ?assertNotEqual(nomatch, binary:match(hd(seen(Warnings)), <<"result cache has stopped">>)),
+    receive {'EXIT', Cache, killed} -> ok after 0 -> ok end,
+    process_flag(trap_exit, Trapping),
+    vpndetection_stub:stop(Stub).
+
 a_missing_member_warns_once_or_fails_on_request_test() ->
     Warnings = collector(),
     {Stub, Warned} = serving(#{<<"is_vpn">> => true},

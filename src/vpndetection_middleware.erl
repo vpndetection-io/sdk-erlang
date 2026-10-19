@@ -146,6 +146,7 @@ empty_to_undefined(Ip) -> Ip.
 
 classify(Core, Ip) ->
     maybe_warn_bogon(Core, Ip),
+    maybe_warn_dead_cache(Core),
     case vpndetection:lookup(maps:get(client, Core), Ip) of
         {error, Error} ->
             {ok, #{
@@ -204,6 +205,22 @@ maybe_warn_bogon(Core, Ip) ->
                 "the socket peer is the proxy's own."
             >>)
     end.
+
+%% A cache whose process has exited answers every read as a miss, so each request
+%% costs a lookup and nothing else says so: a core built in an application's
+%% `start/2' links its cache to the application master, which ignores the exit.
+maybe_warn_dead_cache(#{client := #{cache := #{pid := _} = Cache}} = Core) ->
+    case vpndetection_cache:alive(Cache) of
+        true ->
+            ok;
+        false ->
+            warn(Core, <<
+                "the result cache has stopped, so every request now costs a lookup. Build the "
+                "core again to restore it, in a process that outlives it"
+            >>)
+    end;
+maybe_warn_dead_cache(_Core) ->
+    ok.
 
 %% A misconfiguration is the same on every request, so saying so once is a
 %% warning and saying so a million times is an outage of its own.

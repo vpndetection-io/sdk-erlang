@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.8.1 - 2026-10-19
+
+### Fixes
+
+- Warn once when a core's result cache has stopped ([`a3ff6cd`](https://github.com/vpndetection-io/sdk-erlang/commit/a3ff6cda5c45f72d9a6913361f2d97c48ccf3534))
+
 ## 3.8.0 - 2026-10-19
 
 ### Features

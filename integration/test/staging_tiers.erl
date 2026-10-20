@@ -14,10 +14,10 @@
 -type rung() :: #{tier := binary(), secret := binary() | undefined, widens := boolean()}.
 
 %% Ascending, one rung per plan tier. `widens' is what the rung promises against
-%% whichever observable rung sits below it: the first paid tier serves strictly
-%% more than a free key; every paid plan answers the same fields, so a higher
-%% paid tier only keeps what the one under it serves, and a free key keeps what
-%% no key does.
+%% whichever observable rung sits below it: a free key serves strictly more than
+%% no key, and the first paid tier strictly more than a free key; every paid
+%% plan answers the same fields, so a higher paid tier only keeps what the one
+%% under it serves.
 %%
 %% Field COUNTS are deliberately absent. Pinning "starter answers seven fields"
 %% turns a pricing change into a red SDK build; the relation between the tiers is
@@ -26,7 +26,7 @@
 rungs() ->
     [
         #{tier => <<"unauth">>, secret => undefined, widens => false},
-        #{tier => <<"free">>, secret => "VPNDETECTION_STAGING_KEY_FREE", widens => false},
+        #{tier => <<"free">>, secret => "VPNDETECTION_STAGING_KEY_FREE", widens => true},
         #{tier => <<"starter">>, secret => "VPNDETECTION_STAGING_KEY_STARTER", widens => true},
         #{tier => <<"scale">>, secret => "VPNDETECTION_STAGING_KEY_SCALE", widens => false},
         #{tier => <<"max">>, secret => "VPNDETECTION_STAGING_KEY_MAX", widens => false}

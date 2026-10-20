@@ -18,7 +18,7 @@ Requires Erlang/OTP 27 or newer. There are no runtime dependencies: everything t
 
 ## Usage
 
-**No API key needed to start.** The free tier answers `ip` and `is_vpn`, and allows 1000 requests per day per source address.
+**No API key needed to start.** Without a key, a lookup answers `ip` and `is_vpn`, up to 1000 a day per source address.
 
 ```erlang
 Client = vpndetection:new(),
@@ -31,16 +31,17 @@ Every call answers `{ok, Term}` or `{error, Error}`. A client holds a cache, whi
 
 ### With an API key
 
-An API key raises your quota, and raises your features on a paid plan. Create one in the [console](https://app.vpndetection.io), then pass it in:
+A free key adds Tor and relay detection, where the address is and the AS that announces it. Every paid plan answers every field, the same on each, and the plans differ only in how many lookups they include. Create a key in the [console](https://app.vpndetection.io), then pass it in:
 
 ```erlang
 Client = vpndetection:new(#{api_key => <<"your-api-key">>}),
 
 {ok, Result} = vpndetection:lookup(Client, <<"45.83.91.1">>),
 maps:get(is_vpn, Result).                        % true
-maps:get(provider, maps:get(vpn, Result)).       % <<"nordvpn">>
-maps:get(is_hosting, Result).                    % true
-maps:get(provider, maps:get(hosting, Result)).   % <<"M247">>
+maps:get(country, maps:get(location, Result)).   % the ISO 3166 country code
+maps:get(name, maps:get(asn, Result)).           % who runs the announcing network
+maps:get(provider, maps:get(vpn, Result)).       % <<"nordvpn">>, on a paid plan
+maps:get(is_hosting, Result).                    % true, on a paid plan
 ```
 
 A detail map that is present but empty (`#{}`) means the flag above it is false. A populated one always carries every one of its keys.
@@ -227,7 +228,7 @@ Check that `state` came back as you sent it before you exchange `code`, which wo
 
 ### Absent is not false
 
-Fields your plan does not include are simply not in the result map. Absent means "not in your plan"; a present `false` means "we checked, and no".
+Without a key only `ip` and `is_vpn` come back, and a free key adds Tor, relay, `location` and `asn`. Fields your plan does not include are simply not in the result map. Absent means "not in your plan"; a present `false` means "we checked, and no".
 
 ```erlang
 maps:get(is_hosting, Result, false).   % when you only want the flag

@@ -68,16 +68,17 @@ sent_ips() ->
         []
     end.
 
-bogon_is_answered_locally_in_the_full_max_shape_test() ->
+bogon_is_answered_locally_in_the_widest_shape_test() ->
     Stub = vpndetection_stub:start(#{}),
     Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), cache => false}),
     {ok, Result} = vpndetection:lookup(Client, <<"10.0.0.1">>),
 
     ?assertEqual(true, maps:get(is_bogon, Result)),
     ?assertEqual(<<"10.0.0.1">>, maps:get(ip, Result)),
-    #{<<"flagsFalse">> := Flags, <<"emptyObjects">> := Objects} = corpus(<<"bogonResponse">>),
+    #{<<"flagsFalse">> := Flags, <<"emptyObjects">> := Objects} = Bogon = corpus(<<"bogonResponse">>),
     [?assertEqual({F, false}, {F, maps:get(atom(F), Result, missing)}) || F <- Flags],
     [?assertEqual({O, #{}}, {O, maps:get(atom(O), Result, missing)}) || O <- Objects],
+    [assert_detail(Obj, Bogon, Result) || Obj <- [<<"location">>, <<"asn">>]],
     ?assertEqual(0, vpndetection_stub:calls(Stub)),
     vpndetection_stub:stop(Stub).
 
@@ -102,7 +103,8 @@ assert_shape(#{<<"body">> := Body, <<"status">> := Status, <<"expect">> := Expec
      || K <- maps:get(<<"absent">>, Expect, [])],
     [?assertEqual({K, #{}}, {K, maps:get(atom(K), Result, missing)})
      || K <- maps:get(<<"emptyPresent">>, Expect, [])],
-    [assert_detail(Obj, Expect, Result) || Obj <- [<<"vpn">>, <<"hosting">>, <<"dcproxy">>, <<"pubproxy">>]],
+    [assert_detail(Obj, Expect, Result)
+     || Obj <- [<<"vpn">>, <<"hosting">>, <<"dcproxy">>, <<"pubproxy">>, <<"location">>, <<"asn">>]],
     vpndetection:close(Client),
     vpndetection_stub:stop(Stub).
 

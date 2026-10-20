@@ -12,7 +12,7 @@
 
 -export([from_wire/1, bogon/1]).
 
--export_type([result/0, detail/0]).
+-export_type([result/0, detail/0, location/0, asn/0]).
 
 %% `is_vpn', `is_bogon' and `raw' are the only keys always present. A tag here
 %% would be attached to the next FUNCTION by edoc and collide with its own,
@@ -38,9 +38,12 @@
     resproxy => detail(),
     dcproxy => detail(),
     mobproxy => detail(),
-    pubproxy => detail()
+    pubproxy => detail(),
+    location => location(),
+    asn => asn()
 }.
 
+%% `method' is deprecated: no plan is answered with it since 2026-10-20.
 -type detail() :: #{
     provider => binary(),
     confidence => binary(),
@@ -58,6 +61,31 @@
     last_usable => binary()
 }.
 
+%% Where the address is, on every keyed answer: every key present, an empty
+%% binary where nothing is known.
+-type location() :: #{
+    continent := binary(),
+    continent_name := binary(),
+    country := binary(),
+    country_name := binary(),
+    timezone := binary(),
+    currency_code := binary(),
+    currency_name := binary(),
+    currency_symbol := binary(),
+    flag_emoji := binary(),
+    flag_unicode := binary()
+}.
+
+%% The AS announcing the address, on every keyed answer: `asn' is 0 and the rest
+%% empty where no announcement covers it.
+-type asn() :: #{
+    asn := non_neg_integer(),
+    name := binary(),
+    domain := binary(),
+    type := binary(),
+    prefix := binary()
+}.
+
 %% @doc Translate a decoded response body into a result.
 %%
 %% Folding over what the body HAS is what preserves absent-versus-false: a key
@@ -68,7 +96,9 @@ from_wire(Body) when is_map(Body) ->
     Mapped = maps:fold(fun(K, V, Acc) -> Acc#{key(K) => value(V)} end, #{}, Body),
     Mapped#{is_bogon => false, raw => Body}.
 
-%% @doc The answer a bogon gets, in the full shape the API serves at its widest plan.
+%% @doc The answer a bogon gets, in the full shape the API serves at its widest plan:
+%% every flag false, every detail empty, and a location and AS of empty binaries
+%% and AS 0.
 %%
 %% This is deliberately the WIDEST shape whatever your plan is, so a caller must
 %% not infer which fields they are entitled to from a bogon answer.
@@ -98,12 +128,19 @@ bogon(Ip) ->
         <<"resproxy">> => #{},
         <<"dcproxy">> => #{},
         <<"mobproxy">> => #{},
-        <<"pubproxy">> => #{}
+        <<"pubproxy">> => #{},
+        <<"location">> => maps:from_keys(
+            [<<"continent">>, <<"continent_name">>, <<"country">>, <<"country_name">>,
+             <<"timezone">>, <<"currency_code">>, <<"currency_name">>, <<"currency_symbol">>,
+             <<"flag_emoji">>, <<"flag_unicode">>],
+            <<>>),
+        <<"asn">> => #{<<"asn">> => 0, <<"name">> => <<>>, <<"domain">> => <<>>,
+                       <<"type">> => <<>>, <<"prefix">> => <<>>}
     },
     (from_wire(Wire))#{is_bogon => true}.
 
-%% Every nested object in a lookup response is one of the detail shapes, so its
-%% keys go through the same allowlist as the top level.
+%% Every nested object in a lookup response is a detail, the location or the AS,
+%% so its keys go through the same allowlist as the top level.
 value(V) when is_map(V) ->
     maps:fold(fun(K, DV, Acc) -> Acc#{key(K) => DV} end, #{}, V);
 value(V) ->
@@ -147,4 +184,20 @@ key(<<"protocols">>) -> protocols;
 key(<<"num_ports">>) -> num_ports;
 key(<<"num_proxies">>) -> num_proxies;
 key(<<"last_usable">>) -> last_usable;
+key(<<"location">>) -> location;
+key(<<"continent">>) -> continent;
+key(<<"continent_name">>) -> continent_name;
+key(<<"country">>) -> country;
+key(<<"country_name">>) -> country_name;
+key(<<"timezone">>) -> timezone;
+key(<<"currency_code">>) -> currency_code;
+key(<<"currency_name">>) -> currency_name;
+key(<<"currency_symbol">>) -> currency_symbol;
+key(<<"flag_emoji">>) -> flag_emoji;
+key(<<"flag_unicode">>) -> flag_unicode;
+key(<<"asn">>) -> asn;
+key(<<"name">>) -> name;
+key(<<"domain">>) -> domain;
+key(<<"type">>) -> type;
+key(<<"prefix">>) -> prefix;
 key(Other) -> Other.

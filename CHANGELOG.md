@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.10.0 - 2026-10-24
+
+### Features
+
+- Add oauth_register, for RFC 7591 dynamic client registration ([`3de0e99`](https://github.com/vpndetection-io/sdk-erlang/commit/3de0e9925f3698e38fe476432f484a6a4d17dc4c))
+
 ## 3.9.1 - 2026-10-24
 
 ### Fixes

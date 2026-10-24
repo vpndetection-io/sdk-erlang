@@ -43,8 +43,9 @@
 %% The most addresses POST /batch takes in one call; a larger batch is sent in
 %% chunks of this size.
 -define(BATCH_MAX, 1000).
-%% What a lookup answers on every plan.
--define(LOOKUP, {whole, [<<"ip">>, <<"is_vpn">>]}).
+%% What a lookup answer must be, whatever the plan: `ip' and `is_vpn' always,
+%% and every other member typed wherever it is present.
+-define(LOOKUP, {whole, lookup_shape()}).
 
 -opaque client() :: #{
     base_url := binary(),
@@ -234,8 +235,8 @@ my_entitlement(Client) ->
 my_entitlement(Client, Options) ->
     checked(Options, fun() ->
         Retries = maps:get(retries, Options, maps:get(retries, Client)),
-        Required = {whole, [<<"org_id">>, <<"apikey">>, <<"plan">>, <<"usage">>]},
-        vpndetection_http:get_json(bound(Client, Options), <<"/api/v1/entitlement">>, [], Retries, Required)
+        Shape = {whole, entitlement_shape()},
+        vpndetection_http:get_json(bound(Client, Options), <<"/api/v1/entitlement">>, [], Retries, Shape)
     end).
 
 -spec lookup_batch(client(), [address()]) ->
@@ -311,14 +312,13 @@ license_types() ->
 %% and would otherwise fill the atom table.
 -spec database_list(client()) -> {ok, [map()]} | {error, vpndetection_error:error()}.
 database_list(Client) ->
-    get_json(Client, <<"/api/v1/database/list">>, [], {<<"databases">>, list}).
+    get_json(Client, <<"/api/v1/database/list">>, [], {<<"databases">>, {list, database_shape()}}).
 
 %% @doc What is inside one dataset: schema, samples, row count, sizes.
 -spec database_metadata(client(), binary() | string()) ->
     {ok, map()} | {error, vpndetection_error:error()}.
 database_metadata(Client, Id) ->
-    Required = {whole, [<<"id">>, <<"updated">>, <<"entries">>, <<"schema">>]},
-    get_json(Client, <<"/api/v1/database/metadata">>, [{<<"id">>, bin(Id)}], Required).
+    get_json(Client, <<"/api/v1/database/metadata">>, [{<<"id">>, bin(Id)}], {whole, metadata_shape()}).
 
 %% @doc Every digest published for one dataset file.
 %%
@@ -330,7 +330,10 @@ database_checksums(Client, Id, Format) ->
     case format_name(Format) of
         {ok, Name} ->
             Query = [{<<"id">>, bin(Id)}, {<<"format">>, Name}],
-            get_json(Client, <<"/api/v1/database/checksum">>, Query, {<<"checksums">>, map});
+            case get_json(Client, <<"/api/v1/database/checksum">>, Query, {whole, checksum_shape()}) of
+                {ok, #{<<"checksums">> := Checksums}} -> {ok, Checksums};
+                {error, Error} -> {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
@@ -353,7 +356,7 @@ database_downloads(Client, Options) ->
         error -> []
     end,
     checked(Options, fun() ->
-        get_json(bound(Client, Options), <<"/api/v1/database/downloads">>, Query, {<<"downloads">>, list})
+        get_json(bound(Client, Options), <<"/api/v1/database/downloads">>, Query, {<<"downloads">>, {list, download_shape()}})
     end).
 
 %% @doc The time-limited URL for one dataset file.
@@ -785,7 +788,10 @@ object(_) -> #{}.
 batch_answer(Ip, Results, Errors) ->
     case {Results, Errors} of
         {#{Ip := Served}, _} when is_map(Served) ->
-            {ok, vpndetection_result:from_wire(Served)};
+            case vpndetection_http:conforms(lookup_shape(), Served) of
+                ok -> {ok, vpndetection_result:from_wire(Served)};
+                {error, Message} -> {error, #{kind => server_error, retryable => false, status => 200, message => Message}}
+            end;
         {_, #{Ip := #{<<"status">> := Status, <<"error">> := Message}}}
           when is_integer(Status), is_binary(Message) ->
             {error, vpndetection_error:from_entry(Status, Message)};
@@ -796,6 +802,83 @@ batch_answer(Ip, Results, Errors) ->
 
 get_json(Client, Path, Query, Member) ->
     vpndetection_http:get_json(Client, Path, Query, maps:get(retries, Client), Member).
+
+%% Each answer's shape, from the pinned spec's schemas: a member the spec
+%% requires and never sends as null is required, a nullable or optional one may
+%% be absent or null, and every one present has the spec's type. `standing',
+%% `license_type', `format', `outcome', `confidence' and `tier' stay strings,
+%% open sets as the spec documents them, and a sample row is an object whatever
+%% its columns.
+lookup_shape() ->
+    Class = {object, [{<<"provider">>, string, false}, {<<"confidence">>, string, false},
+                      {<<"last_seen">>, date, false}]},
+    Proxy = {object, [{<<"provider">>, string, false}, {<<"first_seen">>, date, false},
+                      {<<"last_seen">>, date, false}, {<<"hits">>, integer, false},
+                      {<<"hits_days_pct">>, integer, false}, {<<"providers_num">>, integer, false}]},
+    Flags = [{Flag, boolean, false} || Flag <- [<<"is_hosting">>, <<"is_relay">>, <<"is_tor">>, <<"is_cdn">>,
+                                                <<"is_resproxy">>, <<"is_dcproxy">>, <<"is_mobproxy">>,
+                                                <<"is_pubproxy">>]],
+    {object, [{<<"ip">>, string, true}, {<<"is_vpn">>, boolean, true} | Flags] ++
+             [{<<"vpn">>, {object, [{<<"provider">>, string, false}, {<<"last_seen">>, date, false},
+                                     {<<"confidence">>, string, false}, {<<"method">>, string, false}]}, false},
+              {<<"hosting">>, Class, false}, {<<"relay">>, Class, false}, {<<"tor">>, Class, false},
+              {<<"cdn">>, Class, false}, {<<"resproxy">>, Proxy, false}, {<<"dcproxy">>, Proxy, false},
+              {<<"mobproxy">>, Proxy, false},
+              {<<"pubproxy">>, {object, [{<<"entry">>, boolean, false}, {<<"exit">>, boolean, false},
+                                          {<<"protocols">>, {list, string}, false},
+                                          {<<"num_ports">>, integer, false}, {<<"num_proxies">>, integer, false},
+                                          {<<"last_seen">>, date, false}, {<<"last_usable">>, string, false}]},
+               false},
+              {<<"location">>, {object, [{Key, string, true} || Key <- [<<"continent">>, <<"continent_name">>,
+                                                                     <<"country">>, <<"country_name">>,
+                                                                     <<"timezone">>, <<"currency_code">>,
+                                                                     <<"currency_name">>, <<"currency_symbol">>,
+                                                                     <<"flag_emoji">>, <<"flag_unicode">>]]},
+               false},
+              {<<"asn">>, {object, [{<<"asn">>, integer, true}, {<<"name">>, string, true},
+                                     {<<"domain">>, string, true}, {<<"type">>, string, true},
+                                     {<<"prefix">>, string, true}]}, false}]}.
+
+entitlement_shape() ->
+    {object, [{<<"org_id">>, string, true},
+              {<<"apikey">>, {object, [{<<"id">>, string, true}, {<<"expires">>, date_time, false},
+                                        {<<"allowed_cidrs">>, {list, string}, true}]}, true},
+              {<<"plan">>, {object, [{<<"key">>, string, true}, {<<"tier">>, string, true}]}, true},
+              {<<"usage">>, {object, [{<<"requests">>, integer, true}, {<<"quota">>, integer, true},
+                                       {<<"hard_limit">>, integer, false}, {<<"window_start">>, date_time, true},
+                                       {<<"window_end">>, date_time, true}]}, true}]}.
+
+database_shape() ->
+    Format = {object, [{<<"format">>, string, true}, {<<"bytes">>, integer, false}]},
+    Version = {object, [{<<"id">>, string, true}, {<<"version">>, integer, true}, {<<"summary">>, string, false},
+                        {<<"formats">>, {list, Format}, true}, {<<"sample_formats">>, {list, string}, false}]},
+    {object, [{<<"base">>, string, true}, {<<"name">>, string, true}, {<<"summary">>, string, true},
+              {<<"license_type">>, string, false}, {<<"starts">>, date_time, false},
+              {<<"expires">>, date_time, false}, {<<"renews_at">>, date_time, false},
+              {<<"notice_due_at">>, date_time, false}, {<<"in_term">>, boolean, true},
+              {<<"standing">>, string, true}, {<<"open">>, boolean, true},
+              {<<"versions">>, {list, Version}, true}]}.
+
+metadata_shape() ->
+    Column = {object, [{<<"name">>, string, true}, {<<"type">>, string, true},
+                       {<<"description">>, string, false}]},
+    {object, [{<<"id">>, string, true}, {<<"update_freq">>, string, false}, {<<"updated">>, date, true},
+              {<<"entries">>, integer, true}, {<<"schema">>, {map_of, {list, Column}}, true},
+              {<<"sample">>, {map_of, {list, object}}, false}, {<<"size">>, {map_of, integer}, false},
+              {<<"sample_size">>, {map_of, integer}, false}, {<<"sample_entries">>, integer, false}]}.
+
+checksum_shape() ->
+    {object, [{<<"id">>, string, true}, {<<"format">>, string, true},
+              {<<"checksums">>, {object, [{<<"md5">>, string, true}, {<<"sha1">>, string, true},
+                                           {<<"sha256">>, string, true}, {<<"sha512">>, string, true}]},
+               true}]}.
+
+download_shape() ->
+    {object, [{<<"dataset_id">>, string, true}, {<<"format">>, string, true}, {<<"outcome">>, string, true},
+              {<<"sample">>, boolean, true}, {<<"open">>, boolean, true}, {<<"bytes">>, integer, false},
+              {<<"http_status">>, integer, false}, {<<"apikey_id">>, string, false},
+              {<<"client_ip">>, string, false}, {<<"user_agent">>, string, false},
+              {<<"created">>, date_time, true}]}.
 
 %% The client with this call's `timeout_ms' in place of its own, which is the one
 %% the transport reads for every request it builds.

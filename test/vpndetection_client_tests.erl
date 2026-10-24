@@ -130,15 +130,19 @@ database_responses_are_unwrapped_at_the_right_depth_test() ->
                 <<"standing">> => <<"licensed">>, <<"in_term">> => true,
                 <<"license_type">> => <<"standard">>,
                 <<"starts">> => <<"2026-01-01T00:00:00.000Z">>, <<"expires">> => null,
-                <<"renews_at">> => null, <<"notice_due_at">> => null,
+                <<"renews_at">> => null, <<"notice_due_at">> => null, <<"open">> => false,
                 <<"versions">> => [#{<<"id">> => <<"vpn_ip_extended_v1">>, <<"version">> => 1,
                                      <<"formats">> => [#{<<"format">> => <<"mmdb">>,
                                                          <<"bytes">> => 42}]}]}]}},
         <<"/api/v1/database/downloads">> => #{body => #{
-            <<"downloads">> => [#{<<"dataset_id">> => <<"vpn_ip_extended_v1">>}]}},
+            <<"downloads">> => [#{<<"dataset_id">> => <<"vpn_ip_extended_v1">>, <<"format">> => <<"mmdb">>,
+                                  <<"outcome">> => <<"ok">>, <<"sample">> => false, <<"open">> => false,
+                                  <<"bytes">> => 42, <<"http_status">> => 200, <<"apikey_id">> => null,
+                                  <<"client_ip">> => null, <<"user_agent">> => null,
+                                  <<"created">> => <<"2026-10-01T00:00:00Z">>}]}},
         <<"/api/v1/database/metadata">> => #{body => #{
             <<"id">> => <<"vpn_ip_extended_v1">>, <<"entries">> => 42,
-            <<"updated">> => <<"2026-10-01T00:00:00Z">>, <<"schema">> => #{}}}
+            <<"updated">> => <<"2026-10-01">>, <<"schema">> => #{}}}
     }),
     Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), api_key => <<"k">>}),
 
@@ -156,8 +160,8 @@ database_responses_are_unwrapped_at_the_right_depth_test() ->
     ?assertEqual(error, maps:find(<<"id">>, Family)),
     ?assertEqual([<<"vpn_ip_extended_v1">>],
                  [maps:get(<<"id">>, V) || V <- maps:get(<<"versions">>, Family)]),
-    ?assertEqual({ok, [#{<<"dataset_id">> => <<"vpn_ip_extended_v1">>}]},
-                 vpndetection:database_downloads(Client)),
+    {ok, [Download]} = vpndetection:database_downloads(Client),
+    ?assertEqual(<<"vpn_ip_extended_v1">>, maps:get(<<"dataset_id">>, Download)),
     {ok, Metadata} = vpndetection:database_metadata(Client, <<"vpn_ip_extended_v1">>),
     ?assertEqual(<<"vpn_ip_extended_v1">>, maps:get(<<"id">>, Metadata)),
     vpndetection:close(Client),
@@ -844,6 +848,121 @@ assert_unreadable(Body, Call) ->
 
     ?assertMatch({error, #{kind := server_error, retryable := true, status := 200}}, Call(Client)),
     ?assertEqual(2, counters:get(Sent, 1)).
+
+%% A member of the wrong type at any depth, a numeric string where a number is
+%% due among them, a null the spec does not allow, a date the spec's format does
+%% not name, and a member the spec requires that is missing: each is an answer
+%% the call cannot read. Through 3.9.0 every one came back as served. Each case
+%% is a well-formed answer with one member changed, and each well-formed answer
+%% reads, so a case fails on its one change alone.
+-define(LOOKUP_OK, <<"{\"ip\":\"1.1.1.1\",\"is_vpn\":true,\"is_dcproxy\":true,\"is_pubproxy\":true,"
+    "\"vpn\":{\"provider\":\"p\",\"last_seen\":\"2026-10-20\",\"confidence\":\"high\"},"
+    "\"dcproxy\":{\"provider\":\"d\",\"first_seen\":\"2026-10-01\",\"last_seen\":\"2026-10-20\",\"hits\":3,"
+    "\"hits_days_pct\":10,\"providers_num\":1},"
+    "\"pubproxy\":{\"entry\":true,\"exit\":false,\"protocols\":[\"http\"],\"num_ports\":2,\"num_proxies\":0,"
+    "\"last_seen\":\"2026-10-20\",\"last_usable\":\"\"},"
+    "\"asn\":{\"asn\":5,\"name\":\"n\",\"domain\":\"d\",\"type\":\"t\",\"prefix\":\"p\"}}">>).
+-define(ENTITLEMENT_OK, <<"{\"org_id\":\"o\",\"apikey\":{\"id\":\"k\",\"expires\":null,\"allowed_cidrs\":[]},"
+    "\"plan\":{\"key\":\"max\",\"tier\":\"max\"},\"usage\":{\"requests\":1,\"quota\":10,\"hard_limit\":null,"
+    "\"window_start\":\"2026-10-01T00:00:00Z\",\"window_end\":\"2026-11-01T00:00:00.5+02:00\"}}">>).
+-define(LIST_OK, <<"{\"databases\":[{\"base\":\"vpn_ip\",\"name\":\"VPN IP\",\"summary\":\"s\","
+    "\"license_type\":\"standard\",\"starts\":\"2026-01-01T00:00:00Z\",\"expires\":null,\"renews_at\":null,"
+    "\"notice_due_at\":null,\"in_term\":true,\"standing\":\"licensed\",\"open\":false,"
+    "\"versions\":[{\"id\":\"vpn_ip_v1\",\"version\":1,\"formats\":[{\"format\":\"mmdb\",\"bytes\":760}]}]}]}">>).
+-define(METADATA_OK, <<"{\"id\":\"vpn_ip_v1\",\"update_freq\":\"daily\",\"updated\":\"2026-10-20\",\"entries\":5,"
+    "\"schema\":{\"mmdb\":[{\"name\":\"ip\",\"type\":\"string\"}]},\"sample\":{\"csv\":[{\"ip\":\"1.1.1.1\"}]},"
+    "\"size\":{\"mmdb\":760},\"sample_entries\":1,\"sample_size\":{\"csv\":10}}">>).
+-define(CHECKSUM_OK, <<"{\"id\":\"vpn_ip_v1\",\"format\":\"mmdb\","
+    "\"checksums\":{\"md5\":\"a\",\"sha1\":\"b\",\"sha256\":\"c\",\"sha512\":\"d\"}}">>).
+-define(DOWNLOADS_OK, <<"{\"downloads\":[{\"dataset_id\":\"vpn_ip_v1\",\"format\":\"mmdb\",\"outcome\":\"ok\","
+    "\"sample\":false,\"open\":false,\"bytes\":760,\"http_status\":200,\"apikey_id\":null,\"client_ip\":null,"
+    "\"user_agent\":null,\"created\":\"2026-10-20T10:00:00Z\"}]}">>).
+
+an_answer_of_the_wrong_shape_is_a_retried_server_error_test_() ->
+    Calls = #{lookup => fun(C) -> vpndetection:lookup(C, <<"1.1.1.1">>) end,
+              my_ip => fun vpndetection:my_ip/1,
+              my_entitlement => fun vpndetection:my_entitlement/1,
+              database_list => fun vpndetection:database_list/1,
+              database_metadata => fun(C) -> vpndetection:database_metadata(C, <<"vpn_ip_v1">>) end,
+              database_checksums => fun(C) -> vpndetection:database_checksums(C, <<"vpn_ip_v1">>, mmdb) end,
+              database_downloads => fun vpndetection:database_downloads/1},
+    Good = [{lookup, ?LOOKUP_OK}, {my_ip, ?LOOKUP_OK}, {my_entitlement, ?ENTITLEMENT_OK},
+            {database_list, ?LIST_OK}, {database_metadata, ?METADATA_OK},
+            {database_checksums, ?CHECKSUM_OK}, {database_downloads, ?DOWNLOADS_OK}],
+    Cases = [
+        {lookup, <<"\"hits\":3">>, <<"\"hits\":\"3\"">>},
+        {lookup, <<"\"num_ports\":2">>, <<"\"num_ports\":\"2\"">>},
+        {lookup, <<"\"asn\":5">>, <<"\"asn\":\"5\"">>},
+        {lookup, <<"\"is_vpn\":true">>, <<"\"is_vpn\":\"false\"">>},
+        {lookup, <<"\"is_dcproxy\":true">>, <<"\"is_dcproxy\":\"yes\"">>},
+        {lookup, <<"\"provider\":\"p\"">>, <<"\"provider\":1">>},
+        {lookup, <<"[\"http\"]">>, <<"[null]">>},
+        {lookup, <<"[\"http\"]">>, <<"[1]">>},
+        {lookup, <<"\"asn\":{\"asn\":5,\"name\":\"n\",">>, <<"\"asn\":{\"asn\":5,">>},
+        {lookup, <<"\"last_seen\":\"2026-10-20\",\"confidence\"">>, <<"\"last_seen\":\"x\",\"confidence\"">>},
+        {lookup, <<"\"last_seen\":\"2026-10-20\",\"confidence\"">>, <<"\"last_seen\":\"tomorrow\",\"confidence\"">>},
+        {lookup, <<"\"last_seen\":\"2026-10-20\",\"confidence\"">>, <<"\"last_seen\":\"monday\",\"confidence\"">>},
+        {lookup, <<"\"first_seen\":\"2026-10-01\"">>, <<"\"first_seen\":\"2026-02-30\"">>},
+        {lookup, <<"\"first_seen\":\"2026-10-01\"">>, <<"\"first_seen\":\"2026-10-1\"">>},
+        {lookup, <<"\"last_seen\":\"2026-10-20\",\"last_usable\"">>,
+         <<"\"last_seen\":\"2026-10-20T10:00:00Z\",\"last_usable\"">>},
+        {my_ip, <<"\"hits\":3">>, <<"\"hits\":\"3\"">>},
+        {my_entitlement, <<"\"requests\":1">>, <<"\"requests\":\"1\"">>},
+        {my_entitlement, <<"\"allowed_cidrs\":[]">>, <<"\"allowed_cidrs\":[1]">>},
+        {my_entitlement, <<"\"tier\":\"max\"">>, <<"\"tier\":1">>},
+        {my_entitlement, <<"\"window_start\":\"2026-10-01T00:00:00Z\"">>, <<"\"window_start\":\"x\"">>},
+        {my_entitlement, <<"\"window_start\":\"2026-10-01T00:00:00Z\"">>, <<"\"window_start\":\"2026-10-01T24:00:00Z\"">>},
+        {my_entitlement, <<"\"window_start\":\"2026-10-01T00:00:00Z\"">>, <<"\"window_start\":\"2026-10-01T10:00:00\"">>},
+        {my_entitlement, <<"\"window_start\":\"2026-10-01T00:00:00Z\"">>, <<"\"window_start\":\"2026-02-30T00:00:00Z\"">>},
+        {my_entitlement, <<"\"window_start\":\"2026-10-01T00:00:00Z\"">>, <<"\"window_start\":\"2026-10-01\"">>},
+        {my_entitlement, <<"\"expires\":null">>, <<"\"expires\":\"monday\"">>},
+        {database_list, <<"\"version\":1">>, <<"\"version\":\"1\"">>},
+        {database_list, <<"\"version\":1">>, <<"\"version\":\"x\"">>},
+        {database_list, <<"\"bytes\":760">>, <<"\"bytes\":\"760\"">>},
+        {database_list, <<"\"open\":false">>, <<"\"open\":\"yes\"">>},
+        {database_list, <<"\"open\":false,">>, <<>>},
+        {database_list, <<"\"starts\":\"2026-01-01T00:00:00Z\"">>, <<"\"starts\":\"tomorrow\"">>},
+        {database_list, <<"\"starts\":\"2026-01-01T00:00:00Z\"">>, <<"\"starts\":\"2026-01-01 00:00:00Z\"">>},
+        {database_list, <<"\"formats\":[{\"format\":\"mmdb\",\"bytes\":760}]">>, <<"\"formats\":[{}]">>},
+        {database_metadata, <<"\"entries\":5">>, <<"\"entries\":\"5\"">>},
+        {database_metadata, <<"\"mmdb\":760">>, <<"\"mmdb\":\"760\"">>},
+        {database_metadata, <<"\"mmdb\":760">>, <<"\"mmdb\":[760]">>},
+        {database_metadata, <<"\"updated\":\"2026-10-20\"">>, <<"\"updated\":\"x\"">>},
+        {database_metadata, <<"\"updated\":\"2026-10-20\"">>, <<"\"updated\":\"2026-02-30\"">>},
+        {database_metadata, <<"\"updated\":\"2026-10-20\"">>, <<"\"updated\":\"2026-10-20T10:00:00Z\"">>},
+        {database_metadata, <<"[{\"ip\":\"1.1.1.1\"}]">>, <<"[null]">>},
+        {database_metadata, <<"\"name\":\"ip\",">>, <<"\"name\":1,">>},
+        {database_checksums, <<"\"id\":\"vpn_ip_v1\",">>, <<>>},
+        {database_checksums, <<"\"md5\":\"a\"">>, <<"\"md5\":7">>},
+        {database_downloads, <<"\"bytes\":760">>, <<"\"bytes\":\"760\"">>},
+        {database_downloads, <<"\"client_ip\":null">>, <<"\"client_ip\":5">>},
+        {database_downloads, <<"\"created\":\"2026-10-20T10:00:00Z\"">>, <<"\"created\":\"x\"">>},
+        {database_downloads, <<"\"created\":\"2026-10-20T10:00:00Z\"">>, <<"\"created\":\"2026-10-20T10:00:00+0500\"">>}],
+    [{atom_to_list(Name) ++ " reads its well-formed answer", fun() ->
+        Http = fun(_) -> {ok, #{status => 200, headers => [], body => Body}} end,
+        Client = vpndetection:new(#{api_key => <<"k">>, retries => 0, http => Http, cache => false}),
+        ?assertMatch({ok, _}, (maps:get(Name, Calls))(Client))
+     end} || {Name, Body} <- Good]
+    ++ [{atom_to_list(Name) ++ " " ++ binary_to_list(To), fun() ->
+            Base = proplists:get_value(Name, Good),
+            Body = binary:replace(Base, From, To),
+            ?assertNotEqual(Base, Body),
+            assert_unreadable(Body, maps:get(Name, Calls))
+        end} || {Name, From, To} <- Cases].
+
+%% A batch entry of the wrong shape is that address's error alone, sent once.
+a_batch_entry_of_the_wrong_shape_fails_that_address_alone_test() ->
+    Sent = counters:new(1, []),
+    Body = <<"{\"results\":{\"1.1.1.1\":{\"ip\":\"1.1.1.1\",\"is_vpn\":true,\"dcproxy\":{\"hits\":\"3\"}},"
+             "\"8.8.8.8\":{\"ip\":\"8.8.8.8\",\"is_vpn\":true,\"vpn\":{\"last_seen\":\"tomorrow\"}},"
+             "\"9.9.9.9\":{\"ip\":\"9.9.9.9\",\"is_vpn\":true,\"vpn\":{\"last_seen\":\"2026-10-20\"}}}}">>,
+    Http = fun(_) -> counters:add(Sent, 1, 1), {ok, #{status => 200, headers => [], body => Body}} end,
+    Client = vpndetection:new(#{api_key => <<"k">>, retries => 2, http => Http, cache => false}),
+    Answers = vpndetection:lookup_batch(Client, [<<"1.1.1.1">>, <<"8.8.8.8">>, <<"9.9.9.9">>]),
+    ?assertEqual(1, counters:get(Sent, 1)),
+    ?assertMatch({error, #{kind := server_error, status := 200}}, maps:get(<<"1.1.1.1">>, Answers)),
+    ?assertMatch({error, #{kind := server_error, status := 200}}, maps:get(<<"8.8.8.8">>, Answers)),
+    ?assertMatch({ok, #{ip := <<"9.9.9.9">>}}, maps:get(<<"9.9.9.9">>, Answers)).
 
 %% One entry the batch cannot read is that address's error alone; the rest of the
 %% chunk is answered, and nothing is sent again.

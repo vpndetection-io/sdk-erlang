@@ -6,7 +6,7 @@
 %% chunk at a time.
 -module(vpndetection_http).
 
--export([ensure_ready/0, httpc_fun/0, get_json/5, post_json/5, get_redirect/4, get_stream/4, escape/1]).
+-export([ensure_ready/0, httpc_fun/0, get_json/5, post_json/5, get_redirect/4, get_stream/4, escape/1, conforms/2]).
 -export([oauth_request/3, oauth/4]).
 
 -export_type([request/0, response/0, result/0, sink/0, fold/0, http_fun/0, member/0]).
@@ -42,10 +42,22 @@
 
 -type http_fun() :: fun((request()) -> response()).
 
-%% What a 2xx must hold to be a call's answer: the one member it returns and that
-%% member's type; for an answer that is the whole object, the members it may not
-%% go without; or, for a batch chunk, a `results' or an `errors' object.
--type member() :: {binary(), map | list} | {whole, [binary()]} | chunk.
+%% What a 2xx must hold to be a call's answer: the one member it returns and the
+%% shape that member must have; the shape of an answer that is the whole object;
+%% or, for a batch chunk, a `results' or an `errors' object.
+-type member() :: {binary(), shape()} | {whole, shape()} | chunk.
+
+%% What a JSON value must be, at every depth. An object lists its members as
+%% {wire name, shape, required}: a required one must be present and not null,
+%% while an optional one may be absent or null, and either is checked when it
+%% is there. A member the spec marks nullable is optional here, which is how a
+%% null `bytes' on a refused download stays an answer. `date' is RFC 3339's
+%% full-date and `date_time' its date-time with a zone, each on a day and at a
+%% time that exist.
+-type shape() :: string | integer | boolean | object | date | date_time
+               | {list, shape()} | {map_of, shape()} | {object, [{binary(), shape(), boolean()}]}.
+
+-export_type([shape/0]).
 
 %% Requests go through a profile of our own rather than httpc's default one, so
 %% an application that retunes the default profile (a proxy, a different
@@ -79,7 +91,10 @@ httpc_fun() ->
 
 %% @doc Fetch and decode a JSON answer, retrying what is worth retrying. `Member'
 %% says what the answer must hold: the one member a call returns, which is what
-%% this answers, or the members a whole-object answer may not go without.
+%% this answers, or the shape of a whole-object answer. A member missing that
+%% the spec requires, or of another type than the spec's at any depth, is no
+%% answer at all: a version served as `"3"' is the server's fault, never a
+%% string handed back where the spec promises an integer.
 -spec get_json(map(), binary(), [{binary(), binary()}], non_neg_integer(), member()) ->
     {ok, map() | [map()]} | {error, vpndetection_error:error()}.
 get_json(Client, Path, Query, Retries, Member) ->
@@ -106,28 +121,123 @@ answer(#{status := Status, body := Body}, Member) when Status >= 200, Status < 3
 answer(Result, _Member) ->
     {error, failure(Result)}.
 
-read(Object, {whole, Required}) when is_map(Object) ->
-    case [Key || Key <- Required, maps:get(Key, Object, null) =:= null] of
-        [] -> {ok, Object};
-        [Key | _] -> {error, <<"the API answered with no ", Key/binary>>}
+read(Object, {whole, Shape}) when is_map(Object) ->
+    case conforms(Shape, Object, []) of
+        ok -> {ok, Object};
+        {error, Message} -> {error, Message}
     end;
 read(Object, chunk) when is_map(Object) ->
     case is_map(maps:get(<<"results">>, Object, null)) orelse is_map(maps:get(<<"errors">>, Object, null)) of
         true -> {ok, Object};
         false -> {error, <<"the API answered with neither results nor errors">>}
     end;
-read(Object, {Key, Type}) when is_map(Object) ->
-    case maps:find(Key, Object) of
-        {ok, Value} when Type =:= map, is_map(Value) -> {ok, Value};
-        {ok, Value} when Type =:= list, is_list(Value) ->
-            case lists:all(fun erlang:is_map/1, Value) of
-                true -> {ok, Value};
-                false -> {error, <<"the API answered ", Key/binary, " holding something not an object">>}
-            end;
-        _ -> {error, <<"the API answered with no ", Key/binary>>}
+read(Object, {Key, Shape}) when is_map(Object) ->
+    case maps:get(Key, Object, null) of
+        null ->
+            {error, <<"the API answered with no ", Key/binary>>};
+        Value ->
+            case conforms(Shape, Value, [Key]) of
+                ok -> {ok, Value};
+                {error, Message} -> {error, Message}
+            end
     end;
 read(_Decoded, _Member) ->
     {error, <<"the API did not answer with a JSON object">>}.
+
+%% @doc ok when `Value' has `Shape' at every depth, or an error naming the first
+%% member, by its path, that does not.
+-spec conforms(shape(), term()) -> ok | {error, binary()}.
+conforms(Shape, Value) ->
+    conforms(Shape, Value, []).
+
+conforms(string, Value, _At) when is_binary(Value) -> ok;
+conforms(integer, Value, _At) when is_integer(Value) -> ok;
+conforms(boolean, Value, _At) when is_boolean(Value) -> ok;
+conforms(object, Value, _At) when is_map(Value) -> ok;
+conforms(date, Value, At) when is_binary(Value) ->
+    dated(is_date(Value), At);
+conforms(date_time, Value, At) when is_binary(Value) ->
+    dated(is_date_time(Value), At);
+conforms({list, Shape}, Value, At) when is_list(Value) ->
+    each(Shape, lists:zip(lists:seq(0, length(Value) - 1), Value), At);
+conforms({map_of, Shape}, Value, At) when is_map(Value) ->
+    each(Shape, lists:sort(maps:to_list(Value)), At);
+conforms({object, Members}, Value, At) when is_map(Value) ->
+    members(Members, Value, At);
+conforms(_Shape, _Value, At) ->
+    {error, <<"the API answered ", (path(At))/binary, " of the wrong type">>}.
+
+dated(true, _At) -> ok;
+dated(false, At) -> {error, <<"the API answered ", (path(At))/binary, " that is not a date in the spec's form">>}.
+
+each(_Shape, [], _At) ->
+    ok;
+each(Shape, [{Key, Value} | Rest], At) ->
+    case conforms(Shape, Value, [Key | At]) of
+        ok -> each(Shape, Rest, At);
+        Error -> Error
+    end.
+
+members([], _Object, _At) ->
+    ok;
+members([{Key, Shape, Required} | Rest], Object, At) ->
+    case {maps:get(Key, Object, null), Required} of
+        {null, true} -> {error, <<"the API answered with no ", (path([Key | At]))/binary>>};
+        {null, false} -> members(Rest, Object, At);
+        {Value, _} ->
+            case conforms(Shape, Value, [Key | At]) of
+                ok -> members(Rest, Object, At);
+                Error -> Error
+            end
+    end.
+
+path([]) -> <<"the answer">>;
+path(At) -> iolist_to_binary(lists:join(<<".">>, [segment(S) || S <- lists:reverse(At)])).
+
+segment(Index) when is_integer(Index) -> integer_to_binary(Index);
+segment(Key) -> Key.
+
+%% `YYYY-MM-DD', on a day that exists.
+is_date(<<Y:4/binary, $-, M:2/binary, $-, D:2/binary>>) ->
+    case {digits(Y), digits(M), digits(D)} of
+        {{ok, Year}, {ok, Month}, {ok, Day}} -> calendar:valid_date(Year, Month, Day);
+        _ -> false
+    end;
+is_date(_) ->
+    false.
+
+%% `YYYY-MM-DDTHH:MM:SS', an optional fraction, then `Z' or `+HH:MM'/`-HH:MM',
+%% at a time that exists: no hour 24, no minute or second 60, in the time and in
+%% the zone alike.
+is_date_time(<<Date:10/binary, $T, H:2/binary, $:, Mi:2/binary, $:, S:2/binary, Rest/binary>>) ->
+    is_date(Date) andalso clock(H, 23) andalso clock(Mi, 59) andalso clock(S, 59)
+        andalso zone(fraction(Rest));
+is_date_time(_) ->
+    false.
+
+fraction(<<$., Rest/binary>>) ->
+    case string:span(binary_to_list(Rest), "0123456789") of
+        0 -> invalid;
+        N -> binary:part(Rest, N, byte_size(Rest) - N)
+    end;
+fraction(Rest) ->
+    Rest.
+
+zone(<<"Z">>) -> true;
+zone(<<Sign, H:2/binary, $:, M:2/binary>>) when Sign =:= $+; Sign =:= $- -> clock(H, 23) andalso clock(M, 59);
+zone(_) -> false.
+
+clock(Digits, Max) ->
+    case digits(Digits) of
+        {ok, N} -> N =< Max;
+        error -> false
+    end.
+
+digits(Bin) ->
+    case Bin =/= <<>> andalso lists:all(fun(C) -> C >= $0 andalso C =< $9 end, binary_to_list(Bin)) of
+        true -> {ok, binary_to_integer(Bin)};
+        false -> error
+    end.
 
 unreadable(Status, Message) ->
     #{kind => server_error, retryable => true, status => Status, message => Message}.

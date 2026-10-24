@@ -7,7 +7,7 @@
 -module(vpndetection_http).
 
 -export([ensure_ready/0, httpc_fun/0, get_json/5, post_json/5, get_redirect/4, get_stream/4, escape/1, conforms/2]).
--export([oauth_request/3, oauth/4]).
+-export([oauth_request/3, oauth_json_request/3, oauth/4]).
 
 -export_type([request/0, response/0, result/0, sink/0, fold/0, http_fun/0, member/0]).
 
@@ -258,6 +258,13 @@ oauth_request(#{base_url := BaseUrl, timeout_ms := TimeoutMs, user_agent := Agen
             FormType = {<<"content-type">>, <<"application/x-www-form-urlencoded">>},
             Request#{method := post, headers := Headers ++ [FormType], body => form(Form)}
     end.
+
+%% @doc `oauth_request/3' POSTing a JSON body, `/oauth/register''s. With no
+%% content-type header among them, `whole/1' sends the body as JSON.
+-spec oauth_json_request(map(), binary(), iodata()) -> request().
+oauth_json_request(Client, Path, Json) ->
+    Request = oauth_request(Client, Path, undefined),
+    Request#{method := post, body => iolist_to_binary(Json)}.
 
 %% @doc Send one OAuth request, attempted again up to `Retries' times. A 2xx goes
 %% to `Decode' with its status; a 4xx naming an RFC 6749 `error' is that refusal,

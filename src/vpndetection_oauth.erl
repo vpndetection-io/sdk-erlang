@@ -8,10 +8,11 @@
 -module(vpndetection_oauth).
 
 -export([metadata/2, device_authorization/4, exchange_device_code/4,
-         exchange_refresh_token/4, revoke/4, poll_device_token/4]).
+         exchange_refresh_token/4, revoke/4, poll_device_token/4, register/4]).
 -export([authorization_url/3, exchange_authorization_code/6, create_pkce/0, pkce_challenge/1]).
 
--export_type([metadata/0, device_authorization/0, token_response/0, pkce/0]).
+-export_type([metadata/0, device_authorization/0, token_response/0, pkce/0,
+              client_registration/0]).
 
 -type pkce() :: #{verifier := binary(), challenge := binary(), method := binary()}.
 
@@ -49,6 +50,19 @@
     scope => binary(),
     apikey_id => binary(),
     apikey => binary()
+}.
+
+%% `client_id_issued_at' is Unix seconds, and `token_endpoint_auth_method' always
+%% `<<"none">>'.
+-type client_registration() :: #{
+    client_id := binary(),
+    client_id_issued_at := integer(),
+    client_name := binary(),
+    redirect_uris := [binary()],
+    grant_types => [binary()],
+    response_types => [binary()],
+    token_endpoint_auth_method := binary(),
+    scope => binary()
 }.
 
 -define(DEVICE_CODE_GRANT, <<"urn:ietf:params:oauth:grant-type:device_code">>).
@@ -89,6 +103,17 @@
     {<<"scope">>, scope, string, false},
     {<<"mslm:apikey_id">>, apikey_id, string, false},
     {<<"mslm:apikey">>, apikey, string, false}
+]).
+
+-define(CLIENT_REGISTRATION, [
+    {<<"client_id">>, client_id, string, true},
+    {<<"client_id_issued_at">>, client_id_issued_at, integer, true},
+    {<<"client_name">>, client_name, string, true},
+    {<<"redirect_uris">>, redirect_uris, strings, true},
+    {<<"grant_types">>, grant_types, strings, false},
+    {<<"response_types">>, response_types, strings, false},
+    {<<"token_endpoint_auth_method">>, token_endpoint_auth_method, string, true},
+    {<<"scope">>, scope, string, false}
 ]).
 
 -spec metadata(map(), map()) -> {ok, metadata()} | {error, vpndetection_error:error()}.
@@ -178,6 +203,38 @@ authorization_url(#{base_url := BaseUrl}, Required, Optional) ->
         throw:{bad_argument, Message} ->
             {error, #{kind => bad_request, retryable => false, message => Message}}
     end.
+
+%% The redirect URIs in the order given, then the name unless it is absent or
+%% empty. No URI at all, an empty one, or one with no UTF-8 form is the caller's
+%% `bad_request', with nothing sent. Nothing is stored until a person approves the
+%% client, so this takes the client's retries: a lost answer costs an id nobody
+%% uses.
+-spec register(map(), term(), term(), map()) ->
+    {ok, client_registration()} | {error, vpndetection_error:error()}.
+register(Client, RedirectUris, ClientName, Options) ->
+    try registration(RedirectUris, ClientName) of
+        Body ->
+            Bound = bound(Client, Options),
+            Request = vpndetection_http:oauth_json_request(Bound, <<"/oauth/register">>, json:encode(Body)),
+            vpndetection_http:oauth(Bound, Request, maps:get(retries, Client), decoder(?CLIENT_REGISTRATION))
+    catch
+        throw:{bad_argument, Message} ->
+            {error, #{kind => bad_request, retryable => false, message => Message}}
+    end.
+
+registration(RedirectUris, ClientName) when is_list(RedirectUris), RedirectUris =/= [] ->
+    Uris = [required(<<"redirect_uris[", (integer_to_binary(I))/binary, "]">>, Uri)
+            || {I, Uri} <- lists:enumerate(0, RedirectUris)],
+    case ClientName of
+        undefined -> #{<<"redirect_uris">> => Uris};
+        _ ->
+            case utf8(<<"client_name">>, ClientName) of
+                <<>> -> #{<<"redirect_uris">> => Uris};
+                Name -> #{<<"redirect_uris">> => Uris, <<"client_name">> => Name}
+            end
+    end;
+registration(_RedirectUris, _ClientName) ->
+    throw({bad_argument, <<"redirect_uris must list at least one URI">>}).
 
 %% Never retried: the server spends the code on first read, before it checks the
 %% verifier, so a retry after a lost answer could only be refused.

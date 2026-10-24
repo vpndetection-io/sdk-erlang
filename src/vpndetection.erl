@@ -25,10 +25,12 @@
          oauth_poll_device_token/3, oauth_poll_device_token/4]).
 -export([oauth_authorization_url/4, oauth_authorization_url/5, oauth_exchange_authorization_code/5,
          oauth_exchange_authorization_code/6, oauth_create_pkce/0, oauth_pkce_challenge/1]).
+-export([oauth_register/2, oauth_register/3]).
 
 -export_type([client/0, options/0, address/0, lookup_options/0, batch_options/0,
               downloads_options/0, format/0]).
--export_type([oauth_options/0, device_authorization_options/0, authorization_url_options/0]).
+-export_type([oauth_options/0, device_authorization_options/0, authorization_url_options/0,
+              register_options/0]).
 
 -define(DEFAULT_BASE_URL, <<"https://api.vpndetection.io">>).
 -define(DEFAULT_CONCURRENCY, 8).
@@ -84,6 +86,8 @@
                                           timeout_ms => pos_integer() | infinity}.
 -type authorization_url_options() :: #{scope => binary() | string(), state => binary() | string(),
                                        resource => binary() | string()}.
+-type register_options() :: #{client_name => binary() | string(),
+                              timeout_ms => pos_integer() | infinity}.
 
 -spec new() -> client().
 new() ->
@@ -558,6 +562,28 @@ oauth_exchange_authorization_code(Client, ClientId, Code, CodeVerifier, Redirect
     checked(Options, fun() ->
         vpndetection_oauth:exchange_authorization_code(Client, bin(ClientId), bin(Code), bin(CodeVerifier),
                                                        bin(RedirectUri), Options)
+    end).
+
+-spec oauth_register(client(), [binary() | string()]) ->
+    {ok, vpndetection_oauth:client_registration()} | {error, vpndetection_error:error()}.
+oauth_register(Client, RedirectUris) ->
+    oauth_register(Client, RedirectUris, #{}).
+
+%% @doc Register a client for the authorization code flow, for an app that cannot
+%% serve a Client ID Metadata Document, and get its `client_id' for
+%% {@link oauth_authorization_url/5} and {@link oauth_exchange_authorization_code/6}.
+%%
+%% Each redirect URI must be https on a public host name, or http on a loopback
+%% address, which then matches on any port; the server refuses any other with
+%% `#{error_code := <<"invalid_redirect_uri">>}'. `client_name' is shown to the
+%% person as the client's own claim. Nothing is kept until a person approves the
+%% client, so registering again costs nothing, and this is retried like a read.
+%% No URI at all, or an empty one, is `bad_request' with nothing sent.
+-spec oauth_register(client(), [binary() | string()], register_options()) ->
+    {ok, vpndetection_oauth:client_registration()} | {error, vpndetection_error:error()}.
+oauth_register(Client, RedirectUris, Options) ->
+    checked(Options, fun() ->
+        vpndetection_oauth:register(Client, RedirectUris, maps:get(client_name, Options, undefined), Options)
     end).
 
 %% @doc A fresh PKCE pair for one sign-in: 32 bytes from `crypto''s secure random

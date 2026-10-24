@@ -140,8 +140,9 @@ no_oauth_request_carries_the_api_key_test_() ->
         #{<<"apiKey">> := Key, <<"forbiddenHeaders">> := Forbidden, <<"forbiddenQuery">> := ForbiddenQuery} =
             oauth(<<"noCredential">>),
         Token = success_for(<<"token">>),
+        [Registration | _] = maps:get(<<"cases">>, maps:get(<<"responses">>, oauth(<<"register">>))),
         Script = [success_for(<<"metadata">>), success_for(<<"deviceAuthorization">>), Token, Token,
-                  success_for(<<"revoke">>), Token, Token],
+                  success_for(<<"revoke">>), Token, Token, Registration],
         Origin = vpndetection_oauth_origin:start(Script),
         Client = vpndetection:new(#{api_key => Key, base_url => vpndetection_oauth_origin:base_url(Origin),
                                     cache => false, timeout_ms => 2000}),
@@ -155,8 +156,9 @@ no_oauth_request_carries_the_api_key_test_() ->
             {ok, _} = vpndetection:oauth_exchange_refresh_token(Client, ?CLIENT_ID, <<"mo_rt_x">>),
             ok = vpndetection:oauth_revoke(Client, ?CLIENT_ID, <<"mo_rt_x">>),
             {ok, _} = vpndetection:oauth_poll_device_token(Client, ?CLIENT_ID, Device, #{clock => Fake}),
-            vpndetection:oauth_exchange_authorization_code(Client, ?CLIENT_ID, <<"mo_ac_x">>, <<"v">>,
-                                                           <<"http://127.0.0.1:8765/cb">>)
+            {ok, _} = vpndetection:oauth_exchange_authorization_code(Client, ?CLIENT_ID, <<"mo_ac_x">>, <<"v">>,
+                                                                     <<"http://127.0.0.1:8765/cb">>),
+            vpndetection:oauth_register(Client, [<<"http://127.0.0.1:8765/cb">>], #{client_name => <<"Example CLI">>})
         end),
 
         ?assertMatch({ok, _}, Outcome),
@@ -166,7 +168,7 @@ no_oauth_request_carries_the_api_key_test_() ->
         #{query := UrlQuery} = uri_string:parse(Url),
         [?assertNot(lists:keymember(Name, 1, uri_string:dissect_query(UrlQuery))) || Name <- ForbiddenQuery],
         Seen = vpndetection_oauth_origin:requests(Origin),
-        ?assertEqual(7, length(Seen)),
+        ?assertEqual(8, length(Seen)),
         [begin
              [?assertEqual({Path, Name, absent}, {Path, Name, proplists:get_value(Name, Headers, absent)})
               || Name <- Forbidden],
@@ -178,6 +180,89 @@ no_oauth_request_carries_the_api_key_test_() ->
          end || #{path := Path, query := Query, headers := Headers, body := Body} <- Seen],
         vpndetection:close(Client),
         vpndetection_oauth_origin:stop(Origin)
+    end}.
+
+%% The corpus's oauth.register section.
+register_posts_exactly_its_json_body_test_() ->
+    {timeout, 60, fun() ->
+        #{<<"endpoint">> := #{<<"method">> := Method, <<"path">> := Path}, <<"contentType">> := Type,
+          <<"bodies">> := #{<<"cases">> := Cases}, <<"responses">> := #{<<"cases">> := [Served | _]}} =
+            oauth(<<"register">>),
+        [begin
+             Origin = vpndetection_oauth_origin:start([Served]),
+             Client = vpndetection:new(#{base_url => <<(vpndetection_oauth_origin:base_url(Origin))/binary, "///">>,
+                                         timeout_ms => 2000}),
+             Options = maps:from_list([{client_name, N} || N <- [maps:get(<<"clientName">>, Args, undefined)],
+                                                          N =/= undefined]),
+             Uris = maps:get(<<"redirectUris">>, Args),
+             ?assertMatch({Name, {ok, _}}, {Name, bounded(fun() -> vpndetection:oauth_register(Client, Uris, Options) end)}),
+             [#{method := SentMethod, path := SentPath, headers := Headers, body := Sent}] =
+                 vpndetection_oauth_origin:requests(Origin),
+             ?assertEqual({Name, Method, Path}, {Name, SentMethod, SentPath}),
+             SentType = proplists:get_value(<<"content-type">>, Headers, <<>>),
+             ?assertEqual({Name, {0, byte_size(Type)}}, {Name, binary:match(SentType, Type)}),
+             ?assertEqual({Name, Body}, {Name, json:decode(Sent)}),
+             vpndetection_oauth_origin:stop(Origin)
+         end || #{<<"name">> := Name, <<"args">> := Args, <<"body">> := Body} <- Cases]
+    end}.
+
+register_refuses_an_empty_uri_before_sending_test_() ->
+    {timeout, 60, fun() ->
+        Corpus = [Uris || #{<<"args">> := #{<<"redirectUris">> := Uris}}
+                              <- maps:get(<<"cases">>, maps:get(<<"refusals">>, oauth(<<"register">>)))],
+        Local = [[<<"http://127.0.0.1/cb", 16#ff>>], ["http://127.0.0.1/cb" ++ [16#d800]], <<"http://127.0.0.1/cb">>],
+        [begin
+             {Origin, Client} = keyless([]),
+             ?assertMatch({Uris, {error, #{kind := bad_request}}},
+                          {Uris, bounded(fun() -> vpndetection:oauth_register(Client, Uris) end)}),
+             ?assertEqual({Uris, []}, {Uris, vpndetection_oauth_origin:requests(Origin)}),
+             vpndetection_oauth_origin:stop(Origin)
+         end || Uris <- Corpus ++ Local]
+    end}.
+
+register_decodes_on_presence_and_refuses_what_it_cannot_read_test_() ->
+    {timeout, 60, fun() ->
+        #{<<"responses">> := #{<<"cases">> := Responses}, <<"unreadable">> := #{<<"cases">> := Unreadable},
+          <<"errors">> := Errors, <<"retries">> := Retries} = oauth(<<"register">>),
+        Uris = [<<"http://127.0.0.1/cb">>],
+        [begin
+             {Origin, Client} = keyless([Case]),
+             {ok, Answer} = bounded(fun() -> vpndetection:oauth_register(Client, Uris) end),
+             [?assertEqual({Name, Member, Value}, {Name, Member, maps:get(atom(Member), Answer, missing)})
+              || Member := Value <- Present],
+             [?assertEqual({Name, Member, error}, {Name, Member, maps:find(atom(Member), Answer)})
+              || Member <- Absent],
+             vpndetection_oauth_origin:stop(Origin)
+         end || #{<<"name">> := Name, <<"expect">> := #{<<"present">> := Present, <<"absent">> := Absent}} = Case
+                <- Responses],
+        [begin
+             Origin = vpndetection_oauth_origin:start([Case]),
+             Client = vpndetection:new(#{base_url => vpndetection_oauth_origin:base_url(Origin),
+                                         timeout_ms => 2000, retries => 0}),
+             Outcome = bounded(fun() -> vpndetection:oauth_register(Client, Uris) end),
+             ?assertMatch({Name, {error, #{kind := server_error, status := Status}}}, {Name, Outcome}),
+             {error, Error} = Outcome,
+             ?assertNot(maps:is_key(error_code, Error)),
+             ?assertEqual({Name, 1}, {Name, length(vpndetection_oauth_origin:requests(Origin))}),
+             vpndetection_oauth_origin:stop(Origin)
+         end || #{<<"name">> := Name, <<"status">> := Status} = Case <- Unreadable],
+        [begin
+             {Origin, Client} = keyless([Case]),
+             {error, Error} = bounded(fun() -> vpndetection:oauth_register(Client, Uris) end),
+             assert_error(Name, Expect, Error),
+             vpndetection_oauth_origin:stop(Origin)
+         end || #{<<"name">> := Name, <<"expect">> := Expect} = Case <- Errors],
+        [begin
+             Origin = vpndetection_oauth_origin:start(Script),
+             Client = vpndetection:new(#{base_url => vpndetection_oauth_origin:base_url(Origin),
+                                         timeout_ms => 2000}),
+             Outcome = bounded(fun() -> vpndetection:oauth_register(Client, maps:get(<<"redirectUris">>, Args)) end),
+             ?assertEqual({Name, maps:get(<<"requests">>, Expect)},
+                          {Name, length(vpndetection_oauth_origin:requests(Origin))}),
+             assert_outcome(Name, Expect, Outcome),
+             vpndetection_oauth_origin:stop(Origin)
+         end || #{<<"name">> := Name, <<"args">> := Args, <<"responses">> := Script, <<"expect">> := Expect}
+                <- Retries]
     end}.
 
 a_2xx_that_is_not_its_type_is_an_ordinary_server_error_test_() ->

@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.9.1 - 2026-10-24
+
+### Fixes
+
+- Refuse an answer whose member has the wrong type, at any depth ([`c1d4354`](https://github.com/vpndetection-io/sdk-erlang/commit/c1d4354f21992699089ced4f732b5b6de3cf5670))
+
 ## 3.9.0 - 2026-10-20
 
 ### Features

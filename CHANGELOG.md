@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.10.1 - 2026-10-26
+
+### Fixes
+
+- Re-pin the spec to 2026.10.25: Retry-After on myip's 429 ([`e850504`](https://github.com/vpndetection-io/sdk-erlang/commit/e850504db8271827a5c76ae6d2ff528817ffa782))
+
 ## 3.10.0 - 2026-10-24
 
 ### Features

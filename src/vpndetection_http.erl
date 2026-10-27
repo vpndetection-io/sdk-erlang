@@ -208,8 +208,10 @@ is_date(_) ->
 
 %% `YYYY-MM-DDTHH:MM:SS', an optional fraction, then `Z' or `+HH:MM'/`-HH:MM',
 %% at a time that exists: no hour 24, no minute or second 60, in the time and in
-%% the zone alike.
-is_date_time(<<Date:10/binary, $T, H:2/binary, $:, Mi:2/binary, $:, S:2/binary, Rest/binary>>) ->
+%% the zone alike. RFC 3339 allows `t' and `z' in lowercase, so both cases are
+%% read.
+is_date_time(<<Date:10/binary, T, H:2/binary, $:, Mi:2/binary, $:, S:2/binary, Rest/binary>>)
+  when T =:= $T; T =:= $t ->
     is_date(Date) andalso clock(H, 23) andalso clock(Mi, 59) andalso clock(S, 59)
         andalso zone(fraction(Rest));
 is_date_time(_) ->
@@ -223,7 +225,7 @@ fraction(<<$., Rest/binary>>) ->
 fraction(Rest) ->
     Rest.
 
-zone(<<"Z">>) -> true;
+zone(<<Z>>) when Z =:= $Z; Z =:= $z -> true;
 zone(<<Sign, H:2/binary, $:, M:2/binary>>) when Sign =:= $+; Sign =:= $- -> clock(H, 23) andalso clock(M, 59);
 zone(_) -> false.
 

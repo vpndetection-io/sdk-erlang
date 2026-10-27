@@ -950,6 +950,42 @@ an_answer_of_the_wrong_shape_is_a_retried_server_error_test_() ->
             assert_unreadable(Body, maps:get(Name, Calls))
         end} || {Name, From, To} <- Cases].
 
+%% RFC 3339 allows `t' and `z' in lowercase, and any fraction or offset; through
+%% 3.10.1 a lowercase date-time failed the call as unreadable.
+every_rfc_3339_form_of_a_date_time_is_read_test_() ->
+    Calls = #{my_entitlement => fun vpndetection:my_entitlement/1,
+              database_list => fun vpndetection:database_list/1,
+              database_downloads => fun vpndetection:database_downloads/1},
+    Sites = [{my_entitlement, ?ENTITLEMENT_OK, <<"2026-10-01T00:00:00Z">>},
+             {database_list, ?LIST_OK, <<"2026-01-01T00:00:00Z">>},
+             {database_downloads, ?DOWNLOADS_OK, <<"2026-10-20T10:00:00Z">>}],
+    [{atom_to_list(Name) ++ " " ++ binary_to_list(Form), fun() ->
+        Http = fun(_) -> {ok, #{status => 200, headers => [], body => binary:replace(Base, Good, Form)}} end,
+        Client = vpndetection:new(#{api_key => <<"k">>, retries => 0, http => Http, cache => false}),
+        ?assertMatch({ok, _}, (maps:get(Name, Calls))(Client))
+     end} || {Name, Base, Good} <- Sites,
+             Form <- [string:lowercase(Good), <<(binary:part(Good, 0, 10))/binary, "t", (binary:part(Good, 11, 8))/binary, "Z">>,
+                      <<(binary:part(Good, 0, 19))/binary, "z">>, <<(binary:part(Good, 0, 19))/binary, "-03:30">>,
+                      <<(binary:part(Good, 0, 19))/binary, ".123456789Z">>]].
+
+%% A date-time missing any part RFC 3339 requires is unreadable.
+a_date_time_missing_a_part_is_a_retried_server_error_test_() ->
+    Calls = #{my_entitlement => fun vpndetection:my_entitlement/1,
+              database_list => fun vpndetection:database_list/1,
+              database_downloads => fun vpndetection:database_downloads/1},
+    Sites = [{my_entitlement, ?ENTITLEMENT_OK, <<"2026-10-01T00:00:00Z">>},
+             {database_list, ?LIST_OK, <<"2026-01-01T00:00:00Z">>},
+             {database_downloads, ?DOWNLOADS_OK, <<"2026-10-20T10:00:00Z">>}],
+    Bad = [<<"2026-10-01">>, <<"2026-10-01T10:00:00">>, <<"2026-10-01T10:00:00+05">>, <<"2026-10-01T10:00Z">>,
+           <<"2026-10-01T10:00:00+0500">>, <<"2026-10-01T10:00:00+05:00:30">>, <<"2026-10-01T10:00:00UTC">>,
+           <<"2026-10-01T10:00:00.Z">>, <<"2026-11-31T10:00:00Z">>, <<"2026-10-01T10:00:00+24:00">>,
+           <<"2026-10-01T10:00:00+05:60">>, <<" 2026-10-01T10:00:00Z">>, <<"2026-10-01T10:00:00Z ">>,
+           <<"2026-10-1T10:00:00Z">>, <<"2026-12-31T23:59:60Z">>, <<"2026-10-01X10:00:00Z">>,
+           <<"2026-10-01T10:00:00x">>],
+    [{atom_to_list(Name) ++ " " ++ binary_to_list(V), fun() ->
+        assert_unreadable(binary:replace(Base, Good, V), maps:get(Name, Calls))
+     end} || {Name, Base, Good} <- Sites, V <- Bad].
+
 %% A batch entry of the wrong shape is that address's error alone, sent once.
 a_batch_entry_of_the_wrong_shape_fails_that_address_alone_test() ->
     Sent = counters:new(1, []),

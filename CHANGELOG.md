@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.10.2 - 2026-10-27
+
+### Fixes
+
+- Read a date-time in lowercase, as RFC 3339 allows ([`51adea1`](https://github.com/vpndetection-io/sdk-erlang/commit/51adea1f670553be6738a22b9722a0008fd11fea))
+
 ## 3.10.1 - 2026-10-26
 
 ### Fixes

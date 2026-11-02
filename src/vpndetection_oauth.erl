@@ -207,7 +207,7 @@ authorization_url(#{base_url := BaseUrl}, Required, Optional) ->
 %% The redirect URIs in the order given, then the name unless it is absent or
 %% empty. No URI at all, an empty one, or one with no UTF-8 form is the caller's
 %% `bad_request', with nothing sent. Nothing is stored until a person approves the
-%% client, so this takes the client's retries: a lost answer costs an id nobody
+%% client, so this takes the client's retries: a lost answer costs an ID nobody
 %% uses.
 -spec register(map(), term(), term(), map()) ->
     {ok, client_registration()} | {error, vpndetection_error:error()}.

@@ -4,7 +4,7 @@
 %%
 %% The transfer is budgeted before it starts. Metadata publishes a size per
 %% format, and that size is checked against the ceiling below FIRST, so a
-%% mistaken dataset id can never quietly pull one of the gigabyte datasets
+%% mistaken dataset ID can never quietly pull one of the gigabyte datasets
 %% through CI.
 -module(database_integration_tests).
 
@@ -18,7 +18,7 @@
 %% tripping it means the suite is pointed somewhere unintended, which is exactly
 %% when a transfer must not go ahead.
 -define(CEILING, 8 * 1024 * 1024).
-%% A real catalogue id the max organization holds no license for.
+%% A real catalogue ID the max organization holds no license for.
 -define(UNLICENSED, <<"hosting_ip_v1">>).
 -define(DOWNLOAD_PATH, <<"/api/v1/database/download">>).
 
@@ -165,7 +165,7 @@ fetch() ->
     {ok, Metadata} = vpndetection:database_metadata(Client, ?DATASET),
     ?assertEqual(?DATASET, maps:get(<<"id">>, Metadata, missing)),
     Size = published_size(Metadata),
-    %% Budgeted BEFORE the transfer: a mistaken id would otherwise pull 1.79 GB
+    %% Budgeted BEFORE the transfer: a mistaken ID would otherwise pull 1.79 GB
     %% through CI and the suite would still be green.
     ?assert(Size > 0 andalso Size =< ?CEILING,
             lists:flatten(io_lib:format("~s is ~b bytes, past the ~b ceiling",

@@ -105,7 +105,7 @@ classify(403, _, Message) ->
     #{kind => forbidden, message => Message, retryable => false, status => 403};
 classify(Status, _, Message) when Status < 500 ->
     %% Any other 4xx is a CLIENT error. Falling through to the server_error
-    %% default below would make it retryable, so a bad dataset id would be
+    %% default below would make it retryable, so a bad dataset ID would be
     %% retried twice before failing. Classify on the RANGE, not on a list.
     #{kind => bad_request, message => Message, retryable => false, status => Status};
 classify(Status, _, Message) ->

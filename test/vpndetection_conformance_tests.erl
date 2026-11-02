@@ -237,7 +237,7 @@ an_entry_error_is_classified_by_its_status_test() ->
     Stub = vpndetection_stub:start(#{
         <<"1.1.1.1">> => #{body => #{<<"ip">> => <<"1.1.1.1">>, <<"is_vpn">> => false}},
         <<"8.8.8.8">> => #{status => 429,
-                           body => #{<<"error">> => <<"request allowance exceeded; raise or remove your overage limit">>}},
+                           body => #{<<"error">> => <<"monthly request allowance spent; upgrade your plan for more lookups">>}},
         <<"9.9.9.9">> => #{status => 500, body => #{<<"error">> => <<"lookup failed">>}}
     }),
     Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), retries => 3}),

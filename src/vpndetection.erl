@@ -17,7 +17,8 @@
 -export([my_ip/1, my_ip/2, my_entitlement/1, my_entitlement/2]).
 -export([database_list/1, database_metadata/2, database_checksums/3,
          database_downloads/1, database_downloads/2, database_download_url/3,
-         database_download/4, database_download_bytes/3]).
+         database_download_url/4, database_download/4, database_download/5,
+         database_download_bytes/3, database_download_bytes/4]).
 -export([database_formats/0, standings/0, license_types/0]).
 -export([oauth_metadata/1, oauth_metadata/2, oauth_device_authorization/2,
          oauth_device_authorization/3, oauth_exchange_device_code/3, oauth_exchange_device_code/4,
@@ -28,7 +29,7 @@
 -export([oauth_register/2, oauth_register/3]).
 
 -export_type([client/0, options/0, address/0, lookup_options/0, batch_options/0,
-              downloads_options/0, format/0]).
+              downloads_options/0, download_options/0, format/0]).
 -export_type([oauth_options/0, device_authorization_options/0, authorization_url_options/0,
               register_options/0]).
 
@@ -76,6 +77,11 @@
 -type batch_options() :: #{retries => non_neg_integer(), concurrency => pos_integer(),
                            timeout_ms => pos_integer() | infinity}.
 -type downloads_options() :: #{limit => pos_integer(), timeout_ms => pos_integer() | infinity}.
+%% `build' is one build of the dataset, by the name a `database.updated' webhook
+%% gives it, so the file is the one whose `sha256' the webhook carries. Without
+%% it, the build that is live. A build is kept 7 days; one pruned since is a
+%% `bad_request' with status 410, sent once.
+-type download_options() :: #{build => binary() | string()}.
 -type format() :: csvgz | mmdb.
 %% The same set at runtime, because `format()' checks nothing once compiled.
 -define(FORMATS, [csvgz, mmdb]).
@@ -371,12 +377,20 @@ database_downloads(Client, Options) ->
 -spec database_download_url(client(), binary() | string(), format()) ->
     {ok, binary()} | {error, vpndetection_error:error()}.
 database_download_url(Client, Id, Format) ->
-    case format_name(Format) of
-        {ok, Name} ->
-            Query = [{<<"id">>, bin(Id)}, {<<"format">>, Name}],
+    database_download_url(Client, Id, Format, #{}).
+
+%% @doc {@link database_download_url/3}, for the `build' in `Options'.
+-spec database_download_url(client(), binary() | string(), format(), download_options()) ->
+    {ok, binary()} | {error, vpndetection_error:error()}.
+database_download_url(Client, Id, Format, Options) ->
+    case {format_name(Format), build_param(Options)} of
+        {{ok, Name}, {ok, Build}} ->
+            Query = [{<<"id">>, bin(Id)}, {<<"format">>, Name} | Build],
             vpndetection_http:get_redirect(Client, <<"/api/v1/database/download">>, Query,
                                            maps:get(retries, Client));
-        {error, Error} ->
+        {{error, Error}, _} ->
+            {error, Error};
+        {_, {error, Error}} ->
             {error, Error}
     end.
 
@@ -394,10 +408,17 @@ database_download_url(Client, Id, Format) ->
 -spec database_download(client(), binary() | string(), format(), binary() | string()) ->
     {ok, non_neg_integer()} | {error, vpndetection_error:error()}.
 database_download(Client, Id, Format, Path) ->
+    database_download(Client, Id, Format, Path, #{}).
+
+%% @doc {@link database_download/4}, for the `build' in `Options'.
+-spec database_download(client(), binary() | string(), format(), binary() | string(),
+                        download_options()) ->
+    {ok, non_neg_integer()} | {error, vpndetection_error:error()}.
+database_download(Client, Id, Format, Path, Options) ->
     Dest = bin(Path),
     Partial = <<Dest/binary, ".part">>,
     case file:open(Partial, [write, binary, raw]) of
-        {ok, Fd} -> to_file(Client, Id, Format, Dest, Partial, Fd);
+        {ok, Fd} -> to_file(Client, Id, Format, Options, Dest, Partial, Fd);
         {error, Reason} -> {error, io_error(Partial, Reason)}
     end.
 
@@ -411,8 +432,14 @@ database_download(Client, Id, Format, Path) ->
 -spec database_download_bytes(client(), binary() | string(), format()) ->
     {ok, binary()} | {error, vpndetection_error:error()}.
 database_download_bytes(Client, Id, Format) ->
+    database_download_bytes(Client, Id, Format, #{}).
+
+%% @doc {@link database_download_bytes/3}, for the `build' in `Options'.
+-spec database_download_bytes(client(), binary() | string(), format(), download_options()) ->
+    {ok, binary()} | {error, vpndetection_error:error()}.
+database_download_bytes(Client, Id, Format, Options) ->
     Sink = #{fold => fun(Chunk, Chunks) -> {ok, [Chunk | Chunks]} end, acc => []},
-    case transfer(Client, Id, Format, Sink) of
+    case transfer(Client, Id, Format, Options, Sink) of
         {ok, #{acc := Chunks}} -> {ok, iolist_to_binary(lists:reverse(Chunks))};
         {error, Error} -> {error, Error}
     end.
@@ -599,14 +626,14 @@ oauth_create_pkce() ->
 oauth_pkce_challenge(Verifier) ->
     vpndetection_oauth:pkce_challenge(bin(Verifier)).
 
-to_file(Client, Id, Format, Dest, Partial, Fd) ->
+to_file(Client, Id, Format, Options, Dest, Partial, Fd) ->
     Sink = #{acc => Fd, fold => fun(Chunk, Handle) ->
         case file:write(Handle, Chunk) of
             ok -> {ok, Handle};
             {error, Reason} -> {error, message(Partial, Reason)}
         end
     end},
-    Transferred = transfer(Client, Id, Format, Sink),
+    Transferred = transfer(Client, Id, Format, Options, Sink),
     Closed = file:close(Fd),
     case {Transferred, Closed} of
         {{ok, #{written := Written}}, ok} ->
@@ -624,8 +651,8 @@ to_file(Client, Id, Format, Dest, Partial, Fd) ->
 %% The 302 is followed as a SECOND request that carries no credential: the
 %% presigned link authorizes itself, and forwarding the API key would hand it to
 %% a host with no business holding it.
-transfer(Client, Id, Format, Sink) ->
-    case database_download_url(Client, Id, Format) of
+transfer(Client, Id, Format, Options, Sink) ->
+    case database_download_url(Client, Id, Format, Options) of
         {ok, Url} -> vpndetection_http:get_stream(Client, Url, Sink, maps:get(retries, Client));
         {error, Error} -> {error, Error}
     end.
@@ -933,6 +960,15 @@ check_options(Options) ->
                                   [?MAX_TIMEOUT_MS, TimeoutMs]));
         {true, false} ->
             refused(io_lib:format("retries must be an integer of 0 or more, not ~p", [Retries]))
+    end.
+
+%% The build query parameter, none for the live build. A build that is not a
+%% string is refused here rather than crashing the caller in bin/1.
+build_param(Options) ->
+    case maps:find(build, Options) of
+        error -> {ok, []};
+        {ok, Build} when is_binary(Build); is_list(Build) -> {ok, [{<<"build">>, bin(Build)}]};
+        {ok, Build} -> refused(io_lib:format("build must be a binary or a string, not ~p", [Build]))
     end.
 
 refused(Message) ->

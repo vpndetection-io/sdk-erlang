@@ -180,6 +180,14 @@ If your key carries the `db.download` scope, the licensed databases are availabl
 
 `database_download_url/3` returns a time-limited link rather than the bytes, so you choose how to transfer a file that can run to gigabytes. `vpndetection:database_formats()` lists the formats these take, for checking one that came from a flag or a config file, and `standings()` and `license_types()` list what a family's `standing` and `license_type` can be.
 
+From 3.11.0, `database_download_url/4`, `database_download/5` and `database_download_bytes/4` take `#{build => Build}`, the build a `database.updated` webhook names, so the file is the one whose `sha256` the webhook carries rather than whatever is live by the time you ask. The shorter ones fetch the live build. A build is kept 7 days, and one pruned since is a `bad_request` with status 410:
+
+```erlang
+%% Dataset and Build from a database.updated webhook's data
+{ok, Written} = vpndetection:database_download(Client, Dataset, mmdb, <<Dataset/binary, ".mmdb">>,
+                                               #{build => Build}).
+```
+
 `database_downloads/2` lists your organization's recent download attempts, newest first, refusals included. A denial is what answers "it stopped working", and its absence answers nothing. `limit` defaults to 50 and the API clamps it to 200:
 
 ```erlang

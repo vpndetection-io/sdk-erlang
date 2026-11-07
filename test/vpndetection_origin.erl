@@ -213,7 +213,12 @@ respond(Socket, <<"/expired">>, _Query, _Options) ->
     send(Socket, 403, [{<<"content-type">>, <<"application/xml">>}],
          <<"<Error><Code>AccessDenied</Code></Error>">>);
 respond(Socket, <<"/api/v1/database/download">>, Query, Options) ->
+    Gone = lists:member({<<"build">>, <<"20261029.abc123">>}, uri_string:dissect_query(Query)),
     case dataset(Query) of
+        %% A build the API no longer keeps.
+        _ when Gone ->
+            send(Socket, 410, [{<<"content-type">>, <<"application/json">>}],
+                 iolist_to_binary(json:encode(#{<<"rc">> => <<"BUILD_GONE">>})));
         <<"unlicensed">> ->
             send(Socket, 403, [{<<"content-type">>, <<"application/json">>}],
                  iolist_to_binary(json:encode(#{<<"rc">> => <<"NOT_LICENSED">>})));

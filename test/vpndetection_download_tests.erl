@@ -44,6 +44,36 @@ the_bytes_variant_agrees_with_the_streamed_copy_test_() ->
         done(Origin, Client, Path)
     end}.
 
+%% The origin answers 410 for this build alone, so each call reaching it shows
+%% the build was sent, and a pruned build, gone for good, is asked for once.
+a_build_no_longer_kept_is_a_bad_request_with_its_410_sent_once_test_() ->
+    {timeout, 60, fun() ->
+        {Origin, Client} = origin(),
+        Path = scratch("gone.csv.gz"),
+        Gone = #{build => <<"20261029.abc123">>},
+
+        Results = [vpndetection:database_download_url(Client, <<"dataset">>, csvgz, Gone),
+                   vpndetection:database_download(Client, <<"dataset">>, csvgz, Path, Gone),
+                   vpndetection:database_download_bytes(Client, <<"dataset">>, csvgz, Gone)],
+
+        [?assertMatch({error, #{kind := bad_request, status := 410}}, R) || R <- Results],
+        ?assertEqual(3, vpndetection_origin:hits(Origin, ?DOWNLOAD_PATH)),
+        ?assertEqual(0, vpndetection_origin:hits(Origin, <<"/dataset">>)),
+        ?assertEqual(false, filelib:is_file(<<Path/binary, ".part">>)),
+        done(Origin, Client, Path)
+    end}.
+
+a_build_that_is_not_a_string_is_refused_before_any_request_test_() ->
+    {timeout, 60, fun() ->
+        {Origin, Client} = origin(),
+
+        Result = vpndetection:database_download_url(Client, <<"dataset">>, csvgz, #{build => 20261105}),
+
+        ?assertMatch({error, #{kind := bad_request}}, Result),
+        ?assertEqual(0, vpndetection_origin:hits(Origin, ?DOWNLOAD_PATH)),
+        done(Origin, Client, undefined)
+    end}.
+
 %% The presigned link authorizes itself. Forwarding the API key would hand a
 %% credential to a host with no business holding it, and the mistake is invisible
 %% from the client side because the transfer succeeds either way.

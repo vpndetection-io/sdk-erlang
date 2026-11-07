@@ -2,6 +2,19 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.11.0 - 2026-11-07
+
+### Features
+
+- Download the build a database.updated webhook names ([`5884696`](https://github.com/vpndetection-io/sdk-erlang/commit/5884696147666ff5e3d151137eafdcd4f24ea8d1))
+
+### Fixes
+
+- Re-pin the spec to 2026.11.05: the download's build parameter ([`f086519`](https://github.com/vpndetection-io/sdk-erlang/commit/f086519d9f32564e8568d45fcc47ff4c0bfccb79))
+- Re-pin the spec to 2026.11.03: a proxy flag keeps its last values ([`731b88f`](https://github.com/vpndetection-io/sdk-erlang/commit/731b88f64ad8acfa82fb5cb29dbc81ce1b126b31))
+- Re-pin the spec to 2026.11.02: ID and IDs in its descriptions ([`1bf0553`](https://github.com/vpndetection-io/sdk-erlang/commit/1bf0553332b573c09ce6171992be3a4031277568))
+- Re-pin the spec to 2026.11.02: two spent-allowance messages ([`183c943`](https://github.com/vpndetection-io/sdk-erlang/commit/183c943bd6220017baca8e7132efdee36d5958d0))
+
 ## 3.10.2 - 2026-10-27
 
 ### Fixes

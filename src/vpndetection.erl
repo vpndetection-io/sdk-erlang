@@ -110,8 +110,8 @@ new() ->
 %% `{badarg, {api_key, control_character}}', naming the cause and not the key.
 %%
 %% `timeout_ms' is milliseconds from 1 to 4294967295, or `infinity' for no bound,
-%% and `retries' an integer of 0 or more; anything else raises `badarg' here
-%% rather than failing every call.
+%% `retries' an integer of 0 or more and `concurrency' an integer of 1 or more;
+%% anything else raises `badarg' here rather than failing every call.
 %%
 %% The cache is per client and never shared, because two clients holding
 %% different keys are on different plans and so entitled to different fields.
@@ -130,6 +130,11 @@ new(Options) ->
         true -> ok;
         false -> erlang:error({badarg, {retries, Retries}})
     end,
+    Concurrency = maps:get(concurrency, Options, ?DEFAULT_CONCURRENCY),
+    case is_integer(Concurrency) andalso Concurrency >= 1 of
+        true -> ok;
+        false -> erlang:error({badarg, {concurrency, Concurrency}})
+    end,
     Key = api_key(maps:get(api_key, Options, undefined)),
     case maps:is_key(http, Options) of
         false -> vpndetection_http:ensure_ready();
@@ -139,7 +144,7 @@ new(Options) ->
         base_url => trim_slashes(bin(maps:get(base_url, Options, ?DEFAULT_BASE_URL))),
         api_key => Key,
         cache => cache(maps:get(cache, Options, #{})),
-        concurrency => maps:get(concurrency, Options, ?DEFAULT_CONCURRENCY),
+        concurrency => Concurrency,
         retries => Retries,
         timeout_ms => TimeoutMs,
         user_agent => user_agent(),

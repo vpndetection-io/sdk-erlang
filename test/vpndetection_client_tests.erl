@@ -375,7 +375,8 @@ a_batch_of_2500_addresses_is_three_requests_and_one_answer_each_test() ->
     vpndetection_stub:stop(Stub).
 
 %% A dispatcher that may run nothing waits for ever, so a concurrency below 1 is
-%% refused before any request, for every address it was given.
+%% refused before any request, for every address it was given, and a client's
+%% where it is built, as its retries and timeout are.
 a_batch_concurrency_below_one_is_refused_before_any_request_test() ->
     Stub = vpndetection_stub:start(#{}),
     Http = vpndetection_stub:http(Stub),
@@ -386,9 +387,12 @@ a_batch_concurrency_below_one_is_refused_before_any_request_test() ->
                   {Limit, lists:sort(maps:keys(Got)), [Kind || {error, #{kind := Kind}} <- maps:values(Got)]})
      || Limit <- [0, -1, 1.5],
         Got <- [vpndetection:lookup_batch(Client, Ips, #{concurrency => Limit})]],
-    Zero = vpndetection:new(#{http => Http, cache => false, concurrency => 0}),
-    ?assertMatch(#{<<"9.9.9.9">> := {error, #{kind := bad_request, retryable := false}}},
-                 vpndetection:lookup_batch(Zero, [<<"9.9.9.9">>])),
+    [?assertError({badarg, {concurrency, Limit}},
+                  vpndetection:new(#{http => Http, cache => false, concurrency => Limit}))
+     || Limit <- [0, -1, 1.5, 2.0, nan, infinity, <<"2">>, "2", make_ref()]],
+    [?assertMatch(#{concurrency := Limit},
+                  vpndetection:new(#{http => Http, cache => false, concurrency => Limit}))
+     || Limit <- [1, 64]],
     ?assertEqual(0, vpndetection_stub:calls(Stub)),
     vpndetection_stub:stop(Stub).
 

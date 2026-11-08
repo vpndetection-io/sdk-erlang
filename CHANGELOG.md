@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.11.1 - 2026-11-08
+
+### Fixes
+
+- Refuse a client concurrency that is not an integer of 1 or more in new/1 ([`8dc0567`](https://github.com/vpndetection-io/sdk-erlang/commit/8dc0567a1a099c08528c4227116017c71a695a3e))
+
 ## 3.11.0 - 2026-11-07
 
 ### Features

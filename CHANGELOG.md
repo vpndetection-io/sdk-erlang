@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.12.2 - 2026-11-11
+
+### Fixes
+
+- Name the Unlimited tier and its terms, and re-pin the spec ([`114859e`](https://github.com/vpndetection-io/sdk-erlang/commit/114859eabc9182fcb04d40d3d715c4f8a8c64469))
+
 ## 3.12.1 - 2026-11-11
 
 ### Fixes

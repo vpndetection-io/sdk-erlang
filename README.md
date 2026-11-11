@@ -14,7 +14,7 @@ It tells you whether an IP address is a VPN, residential proxy, Tor node, relay 
 {deps, [vpndetection]}.
 ```
 
-Requires Erlang/OTP 27 or newer. There are no runtime dependencies: everything the client needs is in OTP. From Elixir, add `{:vpndetection, "~> 3.11"}` to your `mix.exs` deps and call it as `:vpndetection`.
+Requires Erlang/OTP 27 or newer. There are no runtime dependencies: everything the client needs is in OTP. From Elixir, add `{:vpndetection, "~> 3.12"}` to your `mix.exs` deps and call it as `:vpndetection`.
 
 ## Usage
 

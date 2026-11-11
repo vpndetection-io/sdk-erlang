@@ -102,8 +102,8 @@ new() ->
 %% @doc Build a client.
 %%
 %% `api_key' is optional: without one a lookup answers `ip', `is_vpn', the Tor
-%% and relay members, `location' and `asn', up to 60 a minute from each address,
-%% and a batch is refused as `unauthorized'. An empty or
+%% and relay members, `location' and `asn', with no daily or monthly cap, and a
+%% batch is refused as `unauthorized'. An empty or
 %% blank key is no key, and so are `false', which is what `os:getenv/1' answers
 %% for a variable that is not set, and `nil', Elixir's `System.get_env/1' answer
 %% for one. The key is trimmed, so one read from a file

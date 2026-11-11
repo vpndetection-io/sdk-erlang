@@ -101,8 +101,9 @@ new() ->
 
 %% @doc Build a client.
 %%
-%% `api_key' is optional: without one you get the free tier, which answers `ip'
-%% and `is_vpn' and allows 1000 requests per day per source address. An empty or
+%% `api_key' is optional: without one a lookup answers `ip', `is_vpn', the Tor
+%% and relay members, `location' and `asn', up to 60 a minute from each address,
+%% and a batch is refused as `unauthorized'. An empty or
 %% blank key is no key, and so are `false', which is what `os:getenv/1' answers
 %% for a variable that is not set, and `nil', Elixir's `System.get_env/1' answer
 %% for one. The key is trimmed, so one read from a file
@@ -268,7 +269,9 @@ lookup_batch(Client, Ips) ->
 %% to line two lists up. An address that fails carries its `{error, Error}' as
 %% its value, so one bad entry cannot lose the rest of the answers: the API
 %% reports a per-entry failure with the status the single lookup would have
-%% answered, and a chunk that fails as a whole marks every address in it.
+%% answered, and a chunk that fails as a whole marks every address in it. The
+%% batch endpoint needs an API key, a free one included: without one, every
+%% address sent to it carries an `unauthorized' error.
 %% Erlang maps have no insertion order, so the result is a set of keys rather
 %% than a sequence. An address given as a tuple is keyed by its text.
 %%

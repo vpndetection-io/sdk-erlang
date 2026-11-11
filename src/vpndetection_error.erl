@@ -6,10 +6,11 @@
 -export_type([kind/0, error/0]).
 
 %% `rate_limited' and `quota_exceeded' both arrive as HTTP 429 and are NOT the
-%% same thing. A rate limit is the API protecting itself and carries
-%% `Retry-After'; retrying works. A spent quota carries no such header and
-%% retrying will not help until the window rolls over or the limit is raised.
-%% The header is the only thing that distinguishes them.
+%% same thing. A rate limit is the API protecting itself, or a lookup without a
+%% key past 60 a minute, and carries `Retry-After'; retrying works. A spent
+%% quota carries no such header and retrying will not help until the window
+%% rolls over or the limit is raised. The header is the only thing that
+%% distinguishes them.
 %% `io' is the one kind the API never causes: it is a local filesystem failure
 %% while a download is being written, which is the caller's disk rather than our
 %% service, and so is never worth retrying against the API.

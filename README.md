@@ -18,30 +18,30 @@ Requires Erlang/OTP 27 or newer. There are no runtime dependencies: everything t
 
 ## Usage
 
-**No API key needed to start.** Without a key, a lookup answers `ip` and `is_vpn`, up to 1000 a day per source address.
+**No API key needed to start.** Without a key a lookup answers `ip`, `is_vpn`, Tor and relay detection, `location` and `asn`, with no daily or monthly cap: up to 60 lookups a minute from each address.
 
 ```erlang
 Client = vpndetection:new(),
 
 {ok, Result} = vpndetection:lookup(Client, <<"45.83.91.1">>),
-maps:get(is_vpn, Result).   % true
+maps:get(is_vpn, Result).                        % true
+maps:get(country, maps:get(location, Result)).   % the ISO 3166 country code
+maps:get(name, maps:get(asn, Result)).           % who runs the announcing network
 ```
 
 Every call answers `{ok, Term}` or `{error, Error}`. A client holds a cache, which is a process, so build one somewhere long lived and call `vpndetection:close(Client)` when you are finished with it.
 
 ### With an API key
 
-A free key adds Tor and relay detection, where the address is and the AS that announces it. Every paid plan answers every field, the same on each, and the plans differ only in how many lookups they include. Create a key in the [console](https://app.vpndetection.io), then pass it in:
+A free key adds every other flag, `is_hosting`, `is_cdn` and the four proxy flags, at 50,000 lookups a month, and every paid plan answers every field, the provider, confidence and last-seen detail behind each flag included. The paid plans differ only in how many lookups they include. Batch lookups need a key. Create one in the [console](https://app.vpndetection.io), then pass it in:
 
 ```erlang
 Client = vpndetection:new(#{api_key => <<"your-api-key">>}),
 
 {ok, Result} = vpndetection:lookup(Client, <<"45.83.91.1">>),
 maps:get(is_vpn, Result).                        % true
-maps:get(country, maps:get(location, Result)).   % the ISO 3166 country code
-maps:get(name, maps:get(asn, Result)).           % who runs the announcing network
+maps:get(is_hosting, Result).                    % true, with any key, a free one included
 maps:get(provider, maps:get(vpn, Result)).       % <<"nordvpn">>, on a paid plan
-maps:get(is_hosting, Result).                    % true, on a paid plan
 ```
 
 A detail map that is present but empty (`#{}`) means the flag above it is false. A populated one always carries every one of its keys.
@@ -72,7 +72,7 @@ Note the key types differ: a lookup answers a map with ATOM keys, while the enti
 
 ### Batch lookup
 
-Look up as many addresses as you like at once. Bogons and cached answers are handled locally, and everything else goes to the batch endpoint in chunks of up to 1000 addresses, in parallel:
+Look up as many addresses as you like at once. Bogons and cached answers are handled locally, and everything else goes to the batch endpoint in chunks of up to 1000 addresses, in parallel. The batch endpoint needs an API key, a free one included:
 
 ```erlang
 Results = vpndetection:lookup_batch(Client, [<<"45.83.91.1">>, <<"8.8.8.8">>, <<"1.1.1.1">>]),
@@ -156,7 +156,7 @@ end.
 
 `kind` is one of `bad_request`, `unauthorized`, `forbidden`, `rate_limited`, `quota_exceeded`, `server_error` or `network`. `status` carries the HTTP status where there was one.
 
-Note that `rate_limited` and `quota_exceeded` both arrive as HTTP 429 and are not the same thing. A rate limit is when the API faces extreme traffic bursts and so retrying later works; but a spent quota needs your allowance raised or the window to roll over. The library retries rate limits for you, but not if your quota is exceeded.
+Note that `rate_limited` and `quota_exceeded` both arrive as HTTP 429 and are not the same thing. A rate limit is when the API faces extreme traffic bursts, or a lookup without a key passes 60 a minute, and so retrying later works; but a spent quota needs your allowance raised or the window to roll over. The library retries rate limits for you, but not if your quota is exceeded.
 
 ### Timeouts and retries
 
@@ -248,11 +248,12 @@ Each redirect URI must be https on a public host name, or http on a loopback add
 
 ### Absent is not false
 
-Without a key only `ip` and `is_vpn` come back, and a free key adds Tor, relay, `location` and `asn`. Fields your plan does not include are simply not in the result map. Absent means "not in your plan"; a present `false` means "we checked, and no".
+Without a key a lookup leaves out `is_hosting`, `is_cdn` and the four proxy flags, and a free key leaves out `vpn` and the detail behind each flag. Fields your plan does not include are simply not in the result map. Absent means "not in your plan"; a present `false` means "we checked, and no".
 
 ```erlang
 maps:get(is_hosting, Result, false).   % when you only want the flag
-maps:is_key(is_hosting, Result).       % whether your plan carries the field
+maps:is_key(is_hosting, Result).       % false without a key: not in your plan
+maps:is_key(vpn, Result).              % false on a free key: not in your plan
 ```
 
 ## Other Libraries

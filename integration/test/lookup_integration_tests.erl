@@ -11,7 +11,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-an_unauthenticated_lookup_answers_ip_and_is_vpn_test_() ->
+a_lookup_without_a_key_answers_ip_and_is_vpn_at_the_least_test_() ->
     {timeout, 60, fun() ->
         Fixture = staging_fixtures:answer(staging_tiers:unauth()),
         Raw = maps:get(raw, Fixture),
@@ -127,22 +127,47 @@ a_bogon_is_answered_without_touching_the_network_test_() ->
         vpndetection:close(Client)
     end}.
 
-a_batch_collapses_duplicates_and_keeps_bogons_off_the_wire_test_() ->
+a_batch_without_a_key_is_refused_once_and_its_bogon_still_answered_test_() ->
     {timeout, 120, fun() ->
         {Client, Recorder} = staging_fixtures:client(staging_tiers:unauth()),
         Probe = staging_fixtures:probe(),
 
-        Got = vpndetection:lookup_batch(Client, [Probe, <<"8.8.8.8">>, Probe, <<"10.0.0.1">>,
-                                                 <<"8.8.8.8">>]),
+        Got = vpndetection:lookup_batch(Client, [Probe, <<"10.0.0.1">>]),
 
-        ?assertEqual(3, map_size(Got)),
-        ?assertEqual([<<"/batch">>], staging_recorder:paths(Recorder)),
-        ?assertEqual(lists:sort([Probe, <<"8.8.8.8">>]), staging_recorder:batch_ips(Recorder)),
         ?assertMatch({ok, #{is_bogon := true}}, maps:get(<<"10.0.0.1">>, Got)),
-        [?assertMatch({Ip, {ok, _}}, {Ip, maps:get(Ip, Got)}) || Ip <- [Probe, <<"8.8.8.8">>]],
+        ?assertMatch({error, #{kind := unauthorized, status := 401, retryable := false}},
+                     maps:get(Probe, Got)),
+        %% One request, never retried.
+        ?assertEqual(1, staging_recorder:requests(Recorder)),
+        ?assertEqual([<<"/batch">>], staging_recorder:paths(Recorder)),
         vpndetection:close(Client),
         staging_recorder:stop(Recorder)
     end}.
+
+a_batch_collapses_duplicates_and_keeps_bogons_off_the_wire_test_() ->
+    {timeout, 120, fun() ->
+        %% A batch needs a key, and the free one is the cheapest that has it.
+        case staging_tiers:skip_reason(staging_tiers:free()) of
+            undefined -> free_batch();
+            Reason -> staging_tiers:notice("SKIPPED: " ++ Reason)
+        end
+    end}.
+
+free_batch() ->
+    {Client, Recorder} = staging_fixtures:client(staging_tiers:free()),
+    Probe = staging_fixtures:probe(),
+
+    Got = vpndetection:lookup_batch(Client, [Probe, <<"8.8.8.8">>, Probe, <<"10.0.0.1">>,
+                                             <<"8.8.8.8">>]),
+
+    ?assertEqual(3, map_size(Got)),
+    ?assertEqual([<<"/batch">>], staging_recorder:paths(Recorder)),
+    ?assert(staging_recorder:carried_key(Recorder)),
+    ?assertEqual(lists:sort([Probe, <<"8.8.8.8">>]), staging_recorder:batch_ips(Recorder)),
+    ?assertMatch({ok, #{is_bogon := true}}, maps:get(<<"10.0.0.1">>, Got)),
+    [?assertMatch({Ip, {ok, _}}, {Ip, maps:get(Ip, Got)}) || Ip <- [Probe, <<"8.8.8.8">>]],
+    vpndetection:close(Client),
+    staging_recorder:stop(Recorder).
 
 flag(Name) ->
     binary_to_existing_atom(<<"is_", Name/binary>>).

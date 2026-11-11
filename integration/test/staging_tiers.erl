@@ -7,7 +7,7 @@
 %% client and every comparison against it is vacuously true.
 -module(staging_tiers).
 
--export([rungs/0, unauth/0, max/0, observable/0, key/1, skip_reason/1, ladder_skip/0, notice/1]).
+-export([rungs/0, unauth/0, free/0, max/0, observable/0, key/1, skip_reason/1, ladder_skip/0, notice/1]).
 
 -export_type([rung/0]).
 
@@ -35,6 +35,11 @@ rungs() ->
 -spec unauth() -> rung().
 unauth() ->
     hd(rungs()).
+
+%% @doc The cheapest rung a batch can run on: POST /batch needs a key.
+-spec free() -> rung().
+free() ->
+    lists:nth(2, rungs()).
 
 -spec max() -> rung().
 max() ->

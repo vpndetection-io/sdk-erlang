@@ -3,8 +3,9 @@
 %%
 %%   VPNDETECTION_LIVE=1 rebar3 eunit --module=vpndetection_live_tests
 %%
-%% It asserts the free tier's shape, including that `is_hosting' is ABSENT
-%% without a key, which is the one claim a stub cannot make honestly.
+%% It asserts the shape of an answer without a key, including that `is_hosting'
+%% is ABSENT, which is the one claim a stub cannot make honestly, and that a
+%% batch without a key is refused.
 -module(vpndetection_live_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -25,8 +26,8 @@ unauthenticated_lookup() ->
 
     {ok, Plain} = vpndetection:lookup(Client, <<"1.1.1.1">>),
     ?assertEqual(false, maps:get(is_vpn, Plain)),
-    %% Absent, not false: the free tier does not include the hosting dataset, so
-    %% `maps:find/2' answers `error' where a paid plan would answer `{ok, _}'.
+    %% Absent, not false: an answer without a key does not include the hosting
+    %% flag, so `maps:find/2' answers `error' where a key would answer `{ok, _}'.
     ?assertEqual(error, maps:find(is_hosting, Plain)),
     ?assertEqual(false, maps:get(is_hosting, Plain, false)),
     ?assertEqual(undefined, maps:get(is_hosting, Plain, undefined)),
@@ -34,8 +35,14 @@ unauthenticated_lookup() ->
     {ok, V6} = vpndetection:lookup(Client, <<"2606:4700:4700::1111">>),
     ?assertEqual(<<"2606:4700:4700::1111">>, maps:get(ip, V6)),
 
-    Batch = vpndetection:lookup_batch(Client, [<<"45.83.91.1">>, <<"1.1.1.1">>, <<"10.0.0.1">>]),
+    %% A client of its own, so no answer comes from the lookups above.
+    Fresh = vpndetection:new(#{}),
+    Batch = vpndetection:lookup_batch(Fresh, [<<"45.83.91.1">>, <<"1.1.1.1">>, <<"10.0.0.1">>]),
+    vpndetection:close(Fresh),
     ?assertEqual(3, map_size(Batch)),
     ?assertMatch({ok, #{is_bogon := true}}, maps:get(<<"10.0.0.1">>, Batch)),
+    %% POST /batch needs a key, so every address sent to it is refused.
+    ?assertMatch({error, #{kind := unauthorized, status := 401}}, maps:get(<<"45.83.91.1">>, Batch)),
+    ?assertMatch({error, #{kind := unauthorized, status := 401}}, maps:get(<<"1.1.1.1">>, Batch)),
 
     vpndetection:close(Client).

@@ -68,7 +68,7 @@ fetch(#{tier := Tier} = Rung) ->
     staging_recorder:stop(Recorder),
     %% Checked here rather than in one test, so no comparison anywhere can be
     %% made against a tier that silently ran unauthenticated: an empty or unsent
-    %% key answers the free shape, which satisfies every containment check
+    %% key answers the keyless shape, which satisfies every containment check
     %% vacuously.
     case staging_tiers:key(Rung) of
         undefined -> ok;

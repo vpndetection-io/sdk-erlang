@@ -242,18 +242,17 @@ warn(Core, Message) ->
 
 %% `false' is what `os:getenv/1' answers for a variable that is not set, so a core
 %% built from one runs with no key: said once, here, because every lookup then
-%% spends the free allowance, which is counted per source address, and a server
-%% is one.
+%% counts against the limit for lookups without a key, 60 a minute per source
+%% address, and a server is one, and answers none of the flags a key adds.
 unset_key(#{client := _}, _OnWarn) ->
     ok;
 unset_key(#{api_key := false}, OnWarn) ->
     _ = OnWarn(<<"api_key is false, which os:getenv/1 answers for an unset variable, so every lookup "
-                 "goes out with no key, on the free allowance of 1000 a day per source address">>),
+                 "goes out with no key, limited to 60 a minute per source address">>),
     ok;
 unset_key(#{api_key := nil}, OnWarn) ->
     _ = OnWarn(<<"api_key is nil, which Elixir's System.get_env/1 answers for an unset variable, so "
-                 "every lookup goes out with no key, on the free allowance of 1000 a day per source "
-                 "address">>),
+                 "every lookup goes out with no key, limited to 60 a minute per source address">>),
     ok;
 unset_key(_Options, _OnWarn) ->
     ok.

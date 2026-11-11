@@ -49,13 +49,13 @@ each_tier_serves_a_superset_of_the_tier_below_test_() ->
 ladder() ->
     lists:foldl(fun(Rung, Below) ->
         Fixture = staging_fixtures:answer(Rung),
-        Keys = staging_fixtures:wire_keys(Fixture),
+        Keys = tier_keys(Fixture),
         io:format("~s: ~b fields~n", [maps:get(tier, Rung), length(Keys)]),
         case Below of
             undefined ->
                 ok;
             #{rung := #{tier := BelowTier}} ->
-                BelowKeys = staging_fixtures:wire_keys(Below),
+                BelowKeys = tier_keys(Below),
                 [?assert(lists:member(Key, Keys),
                          binary_to_list(<<(maps:get(tier, Rung))/binary, " drops ", Key/binary,
                                           ", which ", BelowTier/binary, " serves">>))
@@ -71,9 +71,66 @@ ladder() ->
                         ok
                 end
         end,
-        Fixture
+        case maps:get(tier, Rung) of
+            <<"trial">> -> Below;
+            _ -> Fixture
+        end
     end, undefined, staging_tiers:observable()),
     ok.
+
+%% trial_expired marks a trial key's answers, and no other: it is not a field a
+%% tier serves.
+tier_keys(Fixture) ->
+    staging_fixtures:wire_keys(Fixture) -- [<<"trial_expired">>].
+
+a_trial_keys_answer_is_a_paid_one_or_unlimiteds_and_says_which_test_() ->
+    {timeout, 60, fun() -> when_trial(fun trial_answer/0) end}.
+
+trial_answer() ->
+    Raw = maps:get(raw, staging_fixtures:answer(staging_tiers:trial())),
+    Expired = maps:get(<<"trial_expired">>, Raw, missing),
+    ?assert(is_boolean(Expired), "a trial key answers trial_expired"),
+    %% The organization's first 100 lookups of the UTC day are answered in full,
+    %% and the rest as Unlimited's: which half a run sees depends on the day.
+    ?assertEqual(not Expired, maps:is_key(<<"is_hosting">>, Raw)).
+
+a_trial_keys_batch_of_two_is_refused_as_a_bad_request_once_test_() ->
+    {timeout, 120, fun() -> when_trial(fun trial_batch_of_two/0) end}.
+
+trial_batch_of_two() ->
+    {Client, Recorder} = staging_fixtures:client(staging_tiers:trial()),
+    Probe = staging_fixtures:probe(),
+
+    Got = vpndetection:lookup_batch(Client, [Probe, <<"8.8.8.8">>]),
+
+    [?assertMatch({Ip, {error, #{kind := bad_request, status := 402, retryable := false}}},
+                  {Ip, maps:get(Ip, Got)})
+     || Ip <- [Probe, <<"8.8.8.8">>]],
+    %% One request, never retried.
+    ?assertEqual([<<"/batch">>], staging_recorder:paths(Recorder)),
+    vpndetection:close(Client),
+    staging_recorder:stop(Recorder).
+
+a_trial_keys_batch_of_one_is_answered_test_() ->
+    {timeout, 120, fun() -> when_trial(fun trial_batch_of_one/0) end}.
+
+trial_batch_of_one() ->
+    {Client, Recorder} = staging_fixtures:client(staging_tiers:trial()),
+    Probe = staging_fixtures:probe(),
+
+    Got = vpndetection:lookup_batch(Client, [Probe]),
+
+    ?assertMatch({ok, _}, maps:get(Probe, Got)),
+    {ok, #{raw := Raw}} = maps:get(Probe, Got),
+    ?assert(is_boolean(maps:get(<<"trial_expired">>, Raw, missing))),
+    vpndetection:close(Client),
+    staging_recorder:stop(Recorder).
+
+when_trial(Run) ->
+    case staging_tiers:skip_reason(staging_tiers:trial()) of
+        undefined -> Run();
+        Reason -> staging_tiers:notice("SKIPPED: " ++ Reason)
+    end.
 
 %% The point of the whole result mapping: a plan-gated member the server did not
 %% send must be MISSING from the map, which `maps:find/2' answers `error' for. A
@@ -146,15 +203,15 @@ a_batch_without_a_key_is_refused_once_and_its_bogon_still_answered_test_() ->
 
 a_batch_collapses_duplicates_and_keeps_bogons_off_the_wire_test_() ->
     {timeout, 120, fun() ->
-        %% A batch needs a key, and the free one is the cheapest that has it.
-        case staging_tiers:skip_reason(staging_tiers:free()) of
-            undefined -> free_batch();
+        %% A batch needs a paid plan, and starter is the cheapest.
+        case staging_tiers:skip_reason(staging_tiers:paid()) of
+            undefined -> paid_batch();
             Reason -> staging_tiers:notice("SKIPPED: " ++ Reason)
         end
     end}.
 
-free_batch() ->
-    {Client, Recorder} = staging_fixtures:client(staging_tiers:free()),
+paid_batch() ->
+    {Client, Recorder} = staging_fixtures:client(staging_tiers:paid()),
     Probe = staging_fixtures:probe(),
 
     Got = vpndetection:lookup_batch(Client, [Probe, <<"8.8.8.8">>, Probe, <<"10.0.0.1">>,

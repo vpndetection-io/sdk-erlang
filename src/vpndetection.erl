@@ -101,9 +101,9 @@ new() ->
 
 %% @doc Build a client.
 %%
-%% `api_key' is optional: without one a lookup answers `ip', `is_vpn', the Tor
-%% and relay members, `location' and `asn', with no daily or monthly cap, and a
-%% batch is refused as `unauthorized'. An empty or
+%% `api_key' is optional: without one a lookup is on the Unlimited tier,
+%% answering `ip', `is_vpn', the Tor and relay members, `location' and `asn' with
+%% no daily or monthly cap. A batch needs a key on a paid plan. An empty or
 %% blank key is no key, and so are `false', which is what `os:getenv/1' answers
 %% for a variable that is not set, and `nil', Elixir's `System.get_env/1' answer
 %% for one. The key is trimmed, so one read from a file
@@ -239,10 +239,11 @@ my_entitlement(Client) ->
 %% Unlike a lookup there is no useful unauthenticated answer, so a client built
 %% without an API key gets an unauthorized error rather than a partial one.
 %%
-%% Usage counts against the ALLOWANCE WINDOW - the anniversary of the
-%% subscription, not the calendar month and not the billing period - and it is
-%% the same number a lookup is gated on. `hard_limit' is `null' when we never
-%% stop serving, which is not the same as a limit of zero.
+%% Usage counts against the ALLOWANCE WINDOW - on a paid plan the anniversary
+%% of the subscription, not the calendar month and not the billing period, and
+%% on a trial key the UTC day - and it is the same number a lookup is gated
+%% on. `hard_limit' is `null' when we never stop serving, which is not the
+%% same as a limit of zero.
 %%
 %% Deliberately NOT cached: the whole point is what has been spent, and a cached
 %% answer is a wrong one within seconds of the next request.
@@ -270,8 +271,9 @@ lookup_batch(Client, Ips) ->
 %% its value, so one bad entry cannot lose the rest of the answers: the API
 %% reports a per-entry failure with the status the single lookup would have
 %% answered, and a chunk that fails as a whole marks every address in it. The
-%% batch endpoint needs an API key, a free one included: without one, every
-%% address sent to it carries an `unauthorized' error.
+%% batch endpoint needs a paid plan: without a key every address sent to it
+%% carries an `unauthorized' error, and a trial key's batch of two or more a
+%% `bad_request' (HTTP 402).
 %% Erlang maps have no insertion order, so the result is a set of keys rather
 %% than a sequence. An address given as a tuple is keyed by its text.
 %%
@@ -878,7 +880,7 @@ lookup_shape() ->
                       {<<"hits_days_pct">>, integer, false}, {<<"providers_num">>, integer, false}]},
     Flags = [{Flag, boolean, false} || Flag <- [<<"is_hosting">>, <<"is_relay">>, <<"is_tor">>, <<"is_cdn">>,
                                                 <<"is_resproxy">>, <<"is_dcproxy">>, <<"is_mobproxy">>,
-                                                <<"is_pubproxy">>]],
+                                                <<"is_pubproxy">>, <<"trial_expired">>]],
     {object, [{<<"ip">>, string, true}, {<<"is_vpn">>, boolean, true} | Flags] ++
              [{<<"vpn">>, {object, [{<<"provider">>, string, false}, {<<"last_seen">>, date, false},
                                      {<<"confidence">>, string, false}, {<<"method">>, string, false}]}, false},

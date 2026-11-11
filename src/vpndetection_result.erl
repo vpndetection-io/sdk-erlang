@@ -40,7 +40,10 @@
     mobproxy => detail(),
     pubproxy => detail(),
     location => location(),
-    asn => asn()
+    asn => asn(),
+    %% On a Trial key's answers only: false while the organization's 100 full
+    %% answers for the UTC day last, true once the answer is Unlimited's.
+    trial_expired => boolean()
 }.
 
 %% `method' is deprecated: no plan is answered with it since 2026-10-20.
@@ -61,8 +64,8 @@
     last_usable => binary()
 }.
 
-%% Where the address is, on every keyed answer: every key present, an empty
-%% binary where nothing is known.
+%% Where the address is, on every answer, with or without a key: every key
+%% present, an empty binary where nothing is known.
 -type location() :: #{
     continent := binary(),
     continent_name := binary(),
@@ -76,8 +79,8 @@
     flag_unicode := binary()
 }.
 
-%% The AS announcing the address, on every keyed answer: `asn' is 0 and the rest
-%% empty where no announcement covers it.
+%% The AS announcing the address, on every answer, with or without a key: `asn'
+%% is 0 and the rest empty where no announcement covers it.
 -type asn() :: #{
     asn := non_neg_integer(),
     name := binary(),
@@ -161,6 +164,7 @@ key(<<"is_resproxy">>) -> is_resproxy;
 key(<<"is_dcproxy">>) -> is_dcproxy;
 key(<<"is_mobproxy">>) -> is_mobproxy;
 key(<<"is_pubproxy">>) -> is_pubproxy;
+key(<<"trial_expired">>) -> trial_expired;
 key(<<"vpn">>) -> vpn;
 key(<<"hosting">>) -> hosting;
 key(<<"relay">>) -> relay;

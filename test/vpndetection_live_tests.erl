@@ -41,7 +41,7 @@ unauthenticated_lookup() ->
     vpndetection:close(Fresh),
     ?assertEqual(3, map_size(Batch)),
     ?assertMatch({ok, #{is_bogon := true}}, maps:get(<<"10.0.0.1">>, Batch)),
-    %% POST /batch needs a key, so every address sent to it is refused.
+    %% POST /batch needs a key on a paid plan, so every address sent to it is refused.
     ?assertMatch({error, #{kind := unauthorized, status := 401}}, maps:get(<<"45.83.91.1">>, Batch)),
     ?assertMatch({error, #{kind := unauthorized, status := 401}}, maps:get(<<"1.1.1.1">>, Batch)),
 

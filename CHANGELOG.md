@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.13.0 - 2026-11-11
+
+### Features
+
+- Add trial_expired for a trial key's answers, and re-pin the spec ([`06a2009`](https://github.com/vpndetection-io/sdk-erlang/commit/06a20095175b3e432a8e0a191dc86527dc67f5c6))
+
 ## 3.12.2 - 2026-11-11
 
 ### Fixes

@@ -78,23 +78,23 @@ ladder() ->
     end, undefined, staging_tiers:observable()),
     ok.
 
-%% trial_expired marks a trial key's answers, and no other: it is not a field a
-%% tier serves.
+%% trial_expired marks a free-plan key's answers, and no other: it is not a field
+%% a tier serves.
 tier_keys(Fixture) ->
     staging_fixtures:wire_keys(Fixture) -- [<<"trial_expired">>].
 
-a_trial_keys_answer_is_a_paid_one_or_unlimiteds_and_says_which_test_() ->
+a_free_plan_keys_answer_is_a_paid_one_or_unlimiteds_and_says_which_test_() ->
     {timeout, 60, fun() -> when_trial(fun trial_answer/0) end}.
 
 trial_answer() ->
     Raw = maps:get(raw, staging_fixtures:answer(staging_tiers:trial())),
     Expired = maps:get(<<"trial_expired">>, Raw, missing),
-    ?assert(is_boolean(Expired), "a trial key answers trial_expired"),
+    ?assert(is_boolean(Expired), "a free-plan key answers trial_expired"),
     %% The organization's first 100 lookups of the UTC day are answered in full,
     %% and the rest as Unlimited's: which half a run sees depends on the day.
     ?assertEqual(not Expired, maps:is_key(<<"is_hosting">>, Raw)).
 
-a_trial_keys_batch_of_two_is_refused_as_a_bad_request_once_test_() ->
+a_free_plan_keys_batch_of_two_is_refused_as_a_bad_request_once_test_() ->
     {timeout, 120, fun() -> when_trial(fun trial_batch_of_two/0) end}.
 
 trial_batch_of_two() ->
@@ -111,7 +111,7 @@ trial_batch_of_two() ->
     vpndetection:close(Client),
     staging_recorder:stop(Recorder).
 
-a_trial_keys_batch_of_one_is_answered_test_() ->
+a_free_plan_keys_batch_of_one_is_answered_test_() ->
     {timeout, 120, fun() -> when_trial(fun trial_batch_of_one/0) end}.
 
 trial_batch_of_one() ->

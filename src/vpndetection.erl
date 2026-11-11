@@ -101,7 +101,7 @@ new() ->
 
 %% @doc Build a client.
 %%
-%% `api_key' is optional: without one a lookup is on the Unlimited tier,
+%% `api_key' is optional: without one a lookup is on Unlimited, the free plan,
 %% answering `ip', `is_vpn', the Tor and relay members, `location' and `asn' with
 %% no daily or monthly cap. A batch needs a key on a paid plan. An empty or
 %% blank key is no key, and so are `false', which is what `os:getenv/1' answers
@@ -241,7 +241,7 @@ my_entitlement(Client) ->
 %%
 %% Usage counts against the ALLOWANCE WINDOW - on a paid plan the anniversary
 %% of the subscription, not the calendar month and not the billing period, and
-%% on a trial key the UTC day - and it is the same number a lookup is gated
+%% on the free plan the UTC day - and it is the same number a lookup is gated
 %% on. `hard_limit' is `null' when we never stop serving, which is not the
 %% same as a limit of zero.
 %%
@@ -272,7 +272,7 @@ lookup_batch(Client, Ips) ->
 %% reports a per-entry failure with the status the single lookup would have
 %% answered, and a chunk that fails as a whole marks every address in it. The
 %% batch endpoint needs a paid plan: without a key every address sent to it
-%% carries an `unauthorized' error, and a trial key's batch of two or more a
+%% carries an `unauthorized' error, and a free-plan key's batch of two or more a
 %% `bad_request' (HTTP 402).
 %% Erlang maps have no insertion order, so the result is a set of keys rather
 %% than a sequence. An address given as a tuple is keyed by its text.

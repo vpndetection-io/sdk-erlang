@@ -41,8 +41,9 @@
     pubproxy => detail(),
     location => location(),
     asn => asn(),
-    %% On a Trial key's answers only: false while the organization's 100 full
-    %% answers for the UTC day last, true once the answer is Unlimited's.
+    %% On answers to a key on the free plan only: false while its organization's
+    %% daily trial lasts (every field for the first 100 lookups each UTC day), true
+    %% once the answer has Unlimited's.
     trial_expired => boolean()
 }.
 

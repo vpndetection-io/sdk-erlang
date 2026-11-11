@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.13.1 - 2026-11-11
+
+### Fixes
+
+- Say the free plan's daily trial and Unlimited, the free plan, and re-pin the spec ([`325c79c`](https://github.com/vpndetection-io/sdk-erlang/commit/325c79ca413e4caf6a5a2d3ea014129e7a2c135a))
+
 ## 3.13.0 - 2026-11-11
 
 ### Features

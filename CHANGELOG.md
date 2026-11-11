@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.12.1 - 2026-11-11
+
+### Fixes
+
+- Re-pin the spec's 2026.11.11 rebuild: plainer words on lookups without a key ([`5da03ed`](https://github.com/vpndetection-io/sdk-erlang/commit/5da03ed82a3121691c0d4707bf73fba023a3dc48))
+
 ## 3.12.0 - 2026-11-11
 
 ### Features

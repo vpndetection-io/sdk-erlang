@@ -189,7 +189,8 @@ a_batch_without_a_key_is_refused_once_and_its_bogon_still_answered_test_() ->
         {Client, Recorder} = staging_fixtures:client(staging_tiers:unauth()),
         Probe = staging_fixtures:probe(),
 
-        Got = vpndetection:lookup_batch(Client, [Probe, <<"10.0.0.1">>]),
+        %% Two addresses on the wire: a keyless batch of one is answered as its lookup.
+        Got = vpndetection:lookup_batch(Client, [Probe, <<"8.8.8.8">>, <<"10.0.0.1">>]),
 
         ?assertMatch({ok, #{is_bogon := true}}, maps:get(<<"10.0.0.1">>, Got)),
         ?assertMatch({error, #{kind := unauthorized, status := 401, retryable := false}},

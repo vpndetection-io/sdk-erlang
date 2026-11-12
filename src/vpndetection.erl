@@ -271,9 +271,10 @@ lookup_batch(Client, Ips) ->
 %% its value, so one bad entry cannot lose the rest of the answers: the API
 %% reports a per-entry failure with the status the single lookup would have
 %% answered, and a chunk that fails as a whole marks every address in it. The
-%% batch endpoint needs a paid plan: without a key every address sent to it
-%% carries an `unauthorized' error, and a free-plan key's batch of two or more a
-%% `bad_request' (HTTP 402).
+%% batch endpoint needs a paid plan: without a key every address in a request of
+%% two or more carries an `unauthorized' error, and a free-plan key's request of
+%% two or more a `bad_request' (HTTP 402). A request of one address is answered
+%% as its lookup would be.
 %% Erlang maps have no insertion order, so the result is a set of keys rather
 %% than a sequence. An address given as a tuple is keyed by its text.
 %%

@@ -18,11 +18,11 @@ probe() -> ?PROBE.
 %% detail object carries on every tier; `optional' is the max-only remainder,
 %% which is absent rather than empty on a lower plan.
 members() ->
-    Class = [<<"provider">>, <<"confidence">>, <<"last_seen">>],
-    Proxy = [<<"provider">>, <<"first_seen">>, <<"last_seen">>, <<"hits">>,
+    Class = [<<"provider">>, <<"provider_name">>, <<"confidence">>, <<"last_seen">>],
+    Proxy = [<<"provider">>, <<"provider_name">>, <<"first_seen">>, <<"last_seen">>, <<"hits">>,
              <<"hits_days_pct">>, <<"providers_num">>],
     #{
-        <<"vpn">> => #{required => [<<"provider">>, <<"last_seen">>],
+        <<"vpn">> => #{required => [<<"provider">>, <<"provider_name">>, <<"last_seen">>],
                        optional => [<<"confidence">>, <<"method">>]},
         <<"hosting">> => #{required => Class, optional => []},
         <<"relay">> => #{required => Class, optional => []},

@@ -2,6 +2,19 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.14.0 - 2026-11-15
+
+### Features
+
+- Re-pin the spec to 2026.11.14: is_bogon on every answer, and provider_name beside each provider ([`4647df3`](https://github.com/vpndetection-io/sdk-erlang/commit/4647df363ff9cc628bdffcebdbbd82759cb0b070))
+
+### Fixes
+
+- README: a bogon answers is_bogon true and every other flag false ([`333a655`](https://github.com/vpndetection-io/sdk-erlang/commit/333a655210cf77d4552e79933701217f969d1a88))
+- Release: fail when hex.pm only stages the publish for approval ([`6f432d3`](https://github.com/vpndetection-io/sdk-erlang/commit/6f432d37c5f8b56e57203a0d8a1f234bb803e471))
+- Say that a batch request of one address is answered as its lookup ([`85151b5`](https://github.com/vpndetection-io/sdk-erlang/commit/85151b510bb904b978599607f60370767a53508e))
+- Re-pin the spec to 2026.11.12: plainer words on the 401 and the batch rate limit ([`e58a38e`](https://github.com/vpndetection-io/sdk-erlang/commit/e58a38e6cb0790c6629be570bde3f498ae646209))
+
 ## 3.13.1 - 2026-11-11
 
 ### Fixes

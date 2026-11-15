@@ -181,6 +181,22 @@ one_bad_address_does_not_lose_the_rest_of_the_batch_test() ->
     vpndetection:close(Client),
     vpndetection_stub:stop(Stub).
 
+a_served_is_bogon_reaches_the_result_test() ->
+    Stub = vpndetection_stub:start(#{
+        <<"8.8.8.8">> => #{body => #{<<"ip">> => <<"8.8.8.8">>, <<"is_bogon">> => true, <<"is_vpn">> => false}},
+        <<"8.8.4.4">> => #{body => #{<<"ip">> => <<"8.8.4.4">>, <<"is_bogon">> => false, <<"is_vpn">> => false}},
+        <<"1.1.1.1">> => #{body => #{<<"ip">> => <<"1.1.1.1">>, <<"is_vpn">> => false}}
+    }),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), cache => false}),
+
+    ?assertMatch({ok, #{is_bogon := true}}, vpndetection:lookup(Client, <<"8.8.8.8">>)),
+    ?assertMatch({ok, #{is_bogon := false}}, vpndetection:lookup(Client, <<"1.1.1.1">>)),
+    Got = vpndetection:lookup_batch(Client, [<<"8.8.8.8">>, <<"8.8.4.4">>]),
+    ?assertMatch({ok, #{is_bogon := true}}, maps:get(<<"8.8.8.8">>, Got)),
+    ?assertMatch({ok, #{is_bogon := false}}, maps:get(<<"8.8.4.4">>, Got)),
+    vpndetection:close(Client),
+    vpndetection_stub:stop(Stub).
+
 cache_hit_issues_no_second_request_test() ->
     Name = <<"cache-hit-issues-no-second-request">>,
     Case = case_of(<<"batch">>, Name),

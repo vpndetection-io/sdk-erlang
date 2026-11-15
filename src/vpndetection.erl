@@ -875,16 +875,18 @@ get_json(Client, Path, Query, Member) ->
 %% its columns.
 lookup_shape() ->
     Class = {object, [{<<"provider">>, string, false}, {<<"confidence">>, string, false},
-                      {<<"last_seen">>, date, false}]},
+                      {<<"last_seen">>, date, false}, {<<"provider_name">>, string, false}]},
     Proxy = {object, [{<<"provider">>, string, false}, {<<"first_seen">>, date, false},
                       {<<"last_seen">>, date, false}, {<<"hits">>, integer, false},
-                      {<<"hits_days_pct">>, integer, false}, {<<"providers_num">>, integer, false}]},
-    Flags = [{Flag, boolean, false} || Flag <- [<<"is_hosting">>, <<"is_relay">>, <<"is_tor">>, <<"is_cdn">>,
+                      {<<"hits_days_pct">>, integer, false}, {<<"providers_num">>, integer, false},
+                      {<<"provider_name">>, string, false}]},
+    Flags = [{Flag, boolean, false} || Flag <- [<<"is_bogon">>, <<"is_hosting">>, <<"is_relay">>, <<"is_tor">>, <<"is_cdn">>,
                                                 <<"is_resproxy">>, <<"is_dcproxy">>, <<"is_mobproxy">>,
                                                 <<"is_pubproxy">>, <<"trial_expired">>]],
     {object, [{<<"ip">>, string, true}, {<<"is_vpn">>, boolean, true} | Flags] ++
              [{<<"vpn">>, {object, [{<<"provider">>, string, false}, {<<"last_seen">>, date, false},
-                                     {<<"confidence">>, string, false}, {<<"method">>, string, false}]}, false},
+                                     {<<"confidence">>, string, false}, {<<"method">>, string, false},
+                                     {<<"provider_name">>, string, false}]}, false},
               {<<"hosting">>, Class, false}, {<<"relay">>, Class, false}, {<<"tor">>, Class, false},
               {<<"cdn">>, Class, false}, {<<"resproxy">>, Proxy, false}, {<<"dcproxy">>, Proxy, false},
               {<<"mobproxy">>, Proxy, false},

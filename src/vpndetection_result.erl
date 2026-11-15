@@ -62,7 +62,11 @@
     protocols => [binary()],
     num_ports => integer(),
     num_proxies => integer(),
-    last_usable => binary()
+    last_usable => binary(),
+    %% The name the provider catalog gives the provider, beside the ID in
+    %% `provider' to key on; an empty binary where the catalog names none or the
+    %% range is unattributed.
+    provider_name => binary()
 }.
 
 %% Where the address is, on every answer, with or without a key: every key
@@ -98,11 +102,11 @@
 -spec from_wire(map()) -> result().
 from_wire(Body) when is_map(Body) ->
     Mapped = maps:fold(fun(K, V, Acc) -> Acc#{key(K) => value(V)} end, #{}, Body),
-    Mapped#{is_bogon => false, raw => Body}.
+    Mapped#{is_bogon => maps:get(is_bogon, Mapped, false), raw => Body}.
 
 %% @doc The answer a bogon gets, in the full shape the API serves at its widest plan:
-%% every flag false, every detail empty, and a location and AS of empty binaries
-%% and AS 0.
+%% `is_bogon' true and every other flag false, every detail empty, and a location
+%% and AS of empty binaries and AS 0, as the API answers a bogon.
 %%
 %% This is deliberately the WIDEST shape whatever your plan is, so a caller must
 %% not infer which fields they are entitled to from a bogon answer.
@@ -115,6 +119,7 @@ from_wire(Body) when is_map(Body) ->
 bogon(Ip) ->
     Wire = #{
         <<"ip">> => Ip,
+        <<"is_bogon">> => true,
         <<"is_vpn">> => false,
         <<"is_hosting">> => false,
         <<"is_relay">> => false,
@@ -141,7 +146,7 @@ bogon(Ip) ->
         <<"asn">> => #{<<"asn">> => 0, <<"name">> => <<>>, <<"domain">> => <<>>,
                        <<"type">> => <<>>, <<"prefix">> => <<>>}
     },
-    (from_wire(Wire))#{is_bogon => true}.
+    from_wire(Wire).
 
 %% Every nested object in a lookup response is a detail, the location or the AS,
 %% so its keys go through the same allowlist as the top level.
@@ -156,6 +161,7 @@ value(V) ->
 %% the dataset metadata's `schema' and `sample' both do) would eventually take
 %% the VM down. Anything unrecognized keeps its binary key.
 key(<<"ip">>) -> ip;
+key(<<"is_bogon">>) -> is_bogon;
 key(<<"is_vpn">>) -> is_vpn;
 key(<<"is_hosting">>) -> is_hosting;
 key(<<"is_relay">>) -> is_relay;
@@ -176,6 +182,7 @@ key(<<"dcproxy">>) -> dcproxy;
 key(<<"mobproxy">>) -> mobproxy;
 key(<<"pubproxy">>) -> pubproxy;
 key(<<"provider">>) -> provider;
+key(<<"provider_name">>) -> provider_name;
 key(<<"confidence">>) -> confidence;
 key(<<"method">>) -> method;
 key(<<"first_seen">>) -> first_seen;

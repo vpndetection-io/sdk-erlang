@@ -31,7 +31,18 @@ jobs:
       # code path that never merges the environment into the repo config, so
       # HEX_API_KEY is ignored and this fails with "No write key found for user"
       # however correctly the secret is set.
-      - run: rebar3 as publish hex publish --repo hexpm --yes
+      # A NEW package's first release is staged for its owner's approval rather
+      # than published, and rebar3 exits 0 for it. Failing here skips the GitHub
+      # Release, which would otherwise announce a version hex.pm does not serve;
+      # once it is approved, cut that release by hand from CHANGELOG.md.
+      - name: Publish to hex.pm
+        run: |
+          set -o pipefail
+          rebar3 as publish hex publish --repo hexpm --yes 2>&1 | tee publish.log
+          if grep -q 'staged for approval' publish.log ; then
+            echo "::error::hex.pm staged this release for its owner's approval and serves nothing yet"
+            exit 1
+          fi
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
 

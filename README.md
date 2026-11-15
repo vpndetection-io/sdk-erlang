@@ -120,11 +120,11 @@ Private, loopback, link-local, documentation and multicast addresses (and their 
 
 ```erlang
 {ok, Result} = vpndetection:lookup(Client, <<"192.168.1.1">>),
-maps:get(is_bogon, Result).   % true, this answer was computed rather than served
+maps:get(is_bogon, Result).   % true, answered locally with no request
 maps:get(is_vpn, Result).     % false
 ```
 
-A locally computed answer is deliberately the widest shape the API serves, so every flag is present and false and every detail map is present and empty. Do not read your plan's features off one.
+A locally computed answer is deliberately the widest shape the API serves, as the API answers a bogon: `is_bogon` is true, every other flag is present and false, and every detail map is present and empty. Do not read your plan's features off one.
 
 The check is available on the client, which is handy when your inputs are addresses anyway:
 

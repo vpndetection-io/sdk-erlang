@@ -909,7 +909,7 @@ entitlement_shape() ->
     {object, [{<<"org_id">>, string, true},
               {<<"apikey">>, {object, [{<<"id">>, string, true}, {<<"expires">>, date_time, false},
                                         {<<"allowed_cidrs">>, {list, string}, true}]}, true},
-              {<<"plan">>, {object, [{<<"key">>, string, true}, {<<"tier">>, string, true}]}, true},
+              {<<"plan">>, {object, [{<<"key">>, string, true}, {<<"name">>, string, true}, {<<"tier">>, string, true}]}, true},
               {<<"usage">>, {object, [{<<"requests">>, integer, true}, {<<"quota">>, integer, true},
                                        {<<"hard_limit">>, integer, false}, {<<"window_start">>, date_time, true},
                                        {<<"window_end">>, date_time, true}]}, true}]}.

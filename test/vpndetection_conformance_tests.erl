@@ -268,6 +268,34 @@ an_entry_error_is_classified_by_its_status_test() ->
     vpndetection:close(Client),
     vpndetection_stub:stop(Stub).
 
+%% Each case serves a well-formed answer carrying a value no published list
+%% holds, and the call hands it back as served. list and downloads unwrap their
+%% envelope, so the answer is put back under its wire name for the corpus's
+%% paths, which are wire names throughout, a number indexing a list.
+a_closed_vocabulary_hands_back_a_value_it_was_not_built_with_test_() ->
+    Calls = #{<<"myEntitlement">> => {<<"/api/v1/entitlement">>, fun vpndetection:my_entitlement/1, none},
+              <<"listDatabases">> => {<<"/api/v1/database/list">>, fun vpndetection:database_list/1, <<"databases">>},
+              <<"listDownloads">> => {<<"/api/v1/database/downloads">>, fun vpndetection:database_downloads/1,
+                                      <<"downloads">>}},
+    Cases = maps:get(<<"cases">>, corpus(<<"vocabulary">>)),
+    [?_assert(length(Cases) >= 6)
+     | [{maps:get(<<"name">>, C), fun() ->
+            {Path, Call, Wrap} = maps:get(maps:get(<<"call">>, C), Calls),
+            Stub = vpndetection_stub:start(#{Path => #{body => maps:get(<<"answer">>, C)}}),
+            Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), api_key => <<"k">>, retries => 0}),
+            {ok, Got} = Call(Client),
+            Answer = case Wrap of none -> Got; Key -> #{Key => Got} end,
+            maps:foreach(fun(Member, Want) ->
+                ?assertEqual({Member, Want}, {Member, member(Answer, binary:split(Member, <<".">>, [global]))})
+            end, maps:get(<<"expect">>, C)),
+            vpndetection:close(Client),
+            vpndetection_stub:stop(Stub)
+        end} || C <- Cases]].
+
+member(Value, []) -> Value;
+member(List, [Step | Rest]) when is_list(List) -> member(lists:nth(binary_to_integer(Step) + 1, List), Rest);
+member(Map, [Step | Rest]) -> member(maps:get(Step, Map), Rest).
+
 corpus(Key) ->
     maps:get(Key, testdata()).
 

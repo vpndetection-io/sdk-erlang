@@ -537,7 +537,7 @@ account_body() ->
       <<"apikey">> => #{<<"id">> => <<"0ab424cc-7619-4dad-b027-afacdc2cedb0">>,
                         <<"expires">> => null,
                         <<"allowed_cidrs">> => []},
-      <<"plan">> => #{<<"key">> => <<"max">>, <<"tier">> => <<"max">>},
+      <<"plan">> => #{<<"key">> => <<"max">>, <<"name">> => <<"Max">>, <<"tier">> => <<"max">>},
       <<"usage">> => #{<<"requests">> => 580,
                        <<"quota">> => 5000000,
                        <<"hard_limit">> => null,
@@ -867,7 +867,7 @@ assert_unreadable(Body, Call) ->
     "\"last_seen\":\"2026-10-20\",\"last_usable\":\"\"},"
     "\"asn\":{\"asn\":5,\"name\":\"n\",\"domain\":\"d\",\"type\":\"t\",\"prefix\":\"p\"}}">>).
 -define(ENTITLEMENT_OK, <<"{\"org_id\":\"o\",\"apikey\":{\"id\":\"k\",\"expires\":null,\"allowed_cidrs\":[]},"
-    "\"plan\":{\"key\":\"max\",\"tier\":\"max\"},\"usage\":{\"requests\":1,\"quota\":10,\"hard_limit\":null,"
+    "\"plan\":{\"key\":\"max\",\"name\":\"Max\",\"tier\":\"max\"},\"usage\":{\"requests\":1,\"quota\":10,\"hard_limit\":null,"
     "\"window_start\":\"2026-10-01T00:00:00Z\",\"window_end\":\"2026-11-01T00:00:00.5+02:00\"}}">>).
 -define(LIST_OK, <<"{\"databases\":[{\"base\":\"vpn_ip\",\"name\":\"VPN IP\",\"summary\":\"s\","
     "\"license_type\":\"standard\",\"starts\":\"2026-01-01T00:00:00Z\",\"expires\":null,\"renews_at\":null,"
@@ -914,6 +914,7 @@ an_answer_of_the_wrong_shape_is_a_retried_server_error_test_() ->
         {my_entitlement, <<"\"requests\":1">>, <<"\"requests\":\"1\"">>},
         {my_entitlement, <<"\"allowed_cidrs\":[]">>, <<"\"allowed_cidrs\":[1]">>},
         {my_entitlement, <<"\"tier\":\"max\"">>, <<"\"tier\":1">>},
+        {my_entitlement, <<"\"name\":\"Max\"">>, <<"\"name\":1">>},
         {my_entitlement, <<"\"window_start\":\"2026-10-01T00:00:00Z\"">>, <<"\"window_start\":\"x\"">>},
         {my_entitlement, <<"\"window_start\":\"2026-10-01T00:00:00Z\"">>, <<"\"window_start\":\"2026-10-01T24:00:00Z\"">>},
         {my_entitlement, <<"\"window_start\":\"2026-10-01T00:00:00Z\"">>, <<"\"window_start\":\"2026-10-01T10:00:00\"">>},

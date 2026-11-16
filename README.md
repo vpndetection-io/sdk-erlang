@@ -61,12 +61,15 @@ Same answer `lookup` would give for that address, and the same cost against your
 {ok, Entitlement} = vpndetection:my_entitlement(Client),
 Plan = maps:get(<<"plan">>, Entitlement),
 Usage = maps:get(<<"usage">>, Entitlement),
-maps:get(<<"key">>, Plan).         % <<"max">>
+maps:get(<<"name">>, Plan).        % <<"Max">>, what to show
+maps:get(<<"key">>, Plan).         % <<"max">>, what to compare against
 maps:get(<<"requests">>, Usage).   % 580
 maps:get(<<"window_end">>, Usage). % when the allowance resets
 ```
 
 Usage counts against the anniversary of your subscription on a paid plan, not the calendar month and not the billing period, and against the UTC day on the free plan; it is the same number a lookup is gated on. `hard_limit` is `null` on an uncapped plan, which is not the same as zero.
+
+Show the plan's `name` and compare against its `key`: a plan's name can change, and its key never does. A value the API adds later to a plan's `tier`, a database's `standing` or `license_type`, a format or a download's `outcome` comes back as the binary it served, so check for the values you know rather than assuming the list is complete.
 
 Note the key types differ: a lookup answers a map with ATOM keys, while the entitlement answers the decoded JSON with BINARY keys. `my_ip/2` and `my_entitlement/2` take a per-call options map.
 

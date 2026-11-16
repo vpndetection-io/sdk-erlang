@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.15.0 - 2026-11-16
+
+### Features
+
+- Read the plan's name, required beside its key ([`620ac81`](https://github.com/vpndetection-io/sdk-erlang/commit/620ac8195b15d10200d2f0c10c2789c924265180))
+
 ## 3.14.0 - 2026-11-15
 
 ### Features

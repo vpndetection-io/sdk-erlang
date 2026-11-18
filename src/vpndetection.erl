@@ -882,7 +882,7 @@ lookup_shape() ->
                       {<<"provider_name">>, string, false}]},
     Flags = [{Flag, boolean, false} || Flag <- [<<"is_bogon">>, <<"is_hosting">>, <<"is_relay">>, <<"is_tor">>, <<"is_cdn">>,
                                                 <<"is_resproxy">>, <<"is_dcproxy">>, <<"is_mobproxy">>,
-                                                <<"is_pubproxy">>, <<"trial_expired">>]],
+                                                <<"is_pubproxy">>, <<"trial_expired">>, <<"cap_reached">>]],
     {object, [{<<"ip">>, string, true}, {<<"is_vpn">>, boolean, true} | Flags] ++
              [{<<"vpn">>, {object, [{<<"provider">>, string, false}, {<<"last_seen">>, date, false},
                                      {<<"confidence">>, string, false}, {<<"method">>, string, false},

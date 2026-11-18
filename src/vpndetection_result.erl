@@ -44,7 +44,11 @@
     %% On answers to a key on the free plan only: false while its organization's
     %% daily trial lasts (every field for the first 100 lookups each UTC day), true
     %% once the answer has Unlimited's.
-    trial_expired => boolean()
+    trial_expired => boolean(),
+    %% On answers to a key on a paid plan only: false while the answer has every
+    %% field, true once its organization's overage cap is reached and the answer
+    %% has Unlimited's. Lookups answered past the cap are not billed.
+    cap_reached => boolean()
 }.
 
 %% `method' is deprecated: no plan is answered with it since 2026-10-20.
@@ -172,6 +176,7 @@ key(<<"is_dcproxy">>) -> is_dcproxy;
 key(<<"is_mobproxy">>) -> is_mobproxy;
 key(<<"is_pubproxy">>) -> is_pubproxy;
 key(<<"trial_expired">>) -> trial_expired;
+key(<<"cap_reached">>) -> cap_reached;
 key(<<"vpn">>) -> vpn;
 key(<<"hosting">>) -> hosting;
 key(<<"relay">>) -> relay;

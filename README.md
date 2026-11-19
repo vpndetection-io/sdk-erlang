@@ -217,7 +217,7 @@ Keyed = case Token of
 end.
 ```
 
-A refusal answers `{error, #{error_code := <<"access_denied">>}}` and a code that expired first `{error, #{error_code := <<"expired_token">>}}`. Client IDs are issued on request from support@vpndetection.io, and `vpndetection:oauth_revoke(Client, ClientId, maps:get(refresh_token, Token))` signs the machine out.
+A refusal answers `{error, #{error_code := <<"access_denied">>}}` and a code that expired first `{error, #{error_code := <<"expired_token">>}}`. `vpndetection:oauth_revoke(Client, ClientId, maps:get(refresh_token, Token))` signs the machine out. Only a client we registered, such as our CLI, can use the device flow: an app of your own signs people in with the authorization code flow below.
 
 ### Sign in with OAuth (authorization code)
 

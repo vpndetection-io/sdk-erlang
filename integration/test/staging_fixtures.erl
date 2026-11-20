@@ -30,8 +30,33 @@ members() ->
         <<"cdn">> => #{required => Class, optional => []},
         <<"resproxy">> => #{required => Proxy, optional => []},
         <<"dcproxy">> => #{required => Proxy, optional => []},
-        <<"mobproxy">> => #{required => Proxy, optional => []}
+        <<"mobproxy">> => #{required => Proxy, optional => []},
+        <<"carrier">> => #{required => [<<"name">>, <<"mcc">>, <<"mnc">>, <<"country">>, <<"confidence">>],
+                           optional => []},
+        <<"satellite">> => #{required => [<<"provider">>, <<"provider_name">>, <<"orbit">>, <<"segment">>,
+                                          <<"country">>, <<"asn">>, <<"confidence">>],
+                             optional => []},
+        <<"ssh">> => #{required => [<<"port">>, <<"banner">>, <<"host_key_fp">>, <<"session_ok">>,
+                                    <<"first_seen">>, <<"last_seen">>],
+                       optional => []},
+        <<"smtp">> => #{required => [<<"port">>, <<"banner">>, <<"session_ok">>, <<"first_seen">>,
+                                     <<"last_seen">>],
+                        optional => []},
+        <<"dns_resolver">> => #{required => [<<"port">>, <<"recursion_available">>, <<"rcode">>,
+                                             <<"answer_correct">>, <<"first_seen">>, <<"last_seen">>],
+                                optional => []},
+        <<"bittorrent">> => #{required => [<<"verified">>, <<"id_matches_ip">>, <<"first_seen">>,
+                                           <<"last_seen">>, <<"last_reachable">>, <<"days_seen">>,
+                                           <<"num_ports">>, <<"peak_num_ports">>, <<"indexer">>,
+                                           <<"clients">>],
+                              optional => []}
     }.
+
+%% What a row of `web', a LIST with a row per port that answered, carries.
+web_keys() ->
+    [<<"port">>, <<"tls_ok">>, <<"session_ok">>, <<"status_code">>, <<"server">>, <<"location">>,
+     <<"title">>, <<"cert_subject_cn">>, <<"cert_subject_o">>, <<"cert_issuer_dn">>,
+     <<"cert_browser_trusted">>, <<"tls_version">>, <<"first_seen">>, <<"last_seen">>].
 
 %% @doc A client for one rung, and the recorder watching what it sends.
 %%
@@ -92,7 +117,21 @@ assert_shape(Tier, Result, Raw) ->
     Served = maps:get(<<"is_vpn">>, Raw, missing),
     ?assert(is_boolean(Served), binary_to_list(<<Tier/binary, ": is_vpn is on every plan">>)),
     ?assertEqual({Tier, Served}, {Tier, maps:get(is_vpn, Result)}),
-    maps:foreach(fun(Name, Spec) -> assert_member(Tier, Name, Spec, Result, Raw) end, members()).
+    maps:foreach(fun(Name, Spec) -> assert_member(Tier, Name, Spec, Result, Raw) end, members()),
+    case maps:find(<<"web">>, Raw) of
+        error ->
+            ok;
+        {ok, Rows} ->
+            ?assert(is_list(Rows), binary_to_list(<<Tier/binary, ": web must be a list">>)),
+            ?assertEqual({Tier, web, Rows =/= []}, {Tier, web, maps:get(<<"is_web">>, Raw, missing)}),
+            [?assert(lists:member(Key, web_keys()),
+                     binary_to_list(<<Tier/binary, ": web.", Key/binary, " is not a documented key">>))
+             || Row <- Rows, Key <- maps:keys(Row)]
+    end,
+    case maps:find(<<"hostname">>, Raw) of
+        error -> ok;
+        {ok, Hostname} -> ?assert(is_binary(Hostname), binary_to_list(<<Tier/binary, ": hostname">>))
+    end.
 
 assert_member(Tier, Name, Spec, Result, Raw) ->
     Flag = <<"is_", Name/binary>>,

@@ -90,8 +90,8 @@ trial_answer() ->
     Raw = maps:get(raw, staging_fixtures:answer(staging_tiers:trial())),
     Expired = maps:get(<<"trial_expired">>, Raw, missing),
     ?assert(is_boolean(Expired), "a free-plan key answers trial_expired"),
-    %% The organization's first 100 lookups of the UTC day are answered in full,
-    %% and the rest as Unlimited's: which half a run sees depends on the day.
+    %% Answered in full while the organization's trial of every field lasts, and
+    %% as Unlimited's after: which half a run sees depends on the trial.
     ?assertEqual(not Expired, maps:is_key(<<"is_hosting">>, Raw)).
 
 a_free_plan_keys_batch_of_two_is_refused_as_a_bad_request_once_test_() ->

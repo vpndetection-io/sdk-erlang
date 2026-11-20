@@ -29,6 +29,8 @@
 -type outcome() :: answer() | retry.
 
 -define(FLIGHT_TAG, '$vpndetection_flight').
+%% The longest a spent trial's or a reached cap's answer is held.
+-define(REDUCED_TTL_MS, 60000).
 
 -record(state, {entries :: ets:table(), order :: ets:table(), max :: pos_integer(),
                 ttl_ms :: pos_integer(), seq = 0 :: non_neg_integer(),
@@ -263,11 +265,18 @@ fresh(State, Ip) ->
 insert(State, Ip, Result) ->
     Seq = State#state.seq + 1,
     forget_order(State, Ip),
-    ExpiresAt = erlang:monotonic_time(millisecond) + State#state.ttl_ms,
+    ExpiresAt = erlang:monotonic_time(millisecond) + life_ms(Result, State#state.ttl_ms),
     ets:insert(State#state.entries, {Ip, Result, ExpiresAt, Seq}),
     ets:insert(State#state.order, {Seq, Ip}),
     evict(State),
     State#state{seq = Seq}.
+
+%% A reduced answer, a spent trial's or a reached cap's, ends with a plan change
+%% or a raised cap, so it stays a minute at most rather than the TTL. It is still
+%% cached, or a busy process would send every repeat of an address to the API.
+life_ms(#{trial_expired := true}, TtlMs) -> min(TtlMs, ?REDUCED_TTL_MS);
+life_ms(#{cap_reached := true}, TtlMs) -> min(TtlMs, ?REDUCED_TTL_MS);
+life_ms(_Result, TtlMs) -> TtlMs.
 
 touch(State, Ip) ->
     Seq = State#state.seq + 1,

@@ -102,8 +102,8 @@ new() ->
 %% @doc Build a client.
 %%
 %% `api_key' is optional: without one a lookup is on Unlimited, the free plan,
-%% answering `ip', `is_vpn', the Tor and relay members, `location' and `asn' with
-%% no daily or monthly cap. A batch needs a key on a paid plan. An empty or
+%% answering `ip', `is_vpn', the Tor and relay members, `is_anycast', `hostname',
+%% `location' and `asn' with no daily or monthly cap. A batch needs a key on a paid plan. An empty or
 %% blank key is no key, and so are `false', which is what `os:getenv/1' answers
 %% for a variable that is not set, and `nil', Elixir's `System.get_env/1' answer
 %% for one. The key is trimmed, so one read from a file
@@ -882,7 +882,43 @@ lookup_shape() ->
                       {<<"provider_name">>, string, false}]},
     Flags = [{Flag, boolean, false} || Flag <- [<<"is_bogon">>, <<"is_hosting">>, <<"is_relay">>, <<"is_tor">>, <<"is_cdn">>,
                                                 <<"is_resproxy">>, <<"is_dcproxy">>, <<"is_mobproxy">>,
-                                                <<"is_pubproxy">>, <<"trial_expired">>, <<"cap_reached">>]],
+                                                <<"is_pubproxy">>, <<"is_anycast">>, <<"is_carrier">>,
+                                                <<"is_satellite">>, <<"is_ssh">>, <<"is_smtp">>, <<"is_web">>,
+                                                <<"is_dns_resolver">>, <<"is_bittorrent">>,
+                                                <<"trial_expired">>, <<"cap_reached">>]],
+    Carrier = {object, [{<<"name">>, string, false}, {<<"mcc">>, string, false}, {<<"mnc">>, string, false},
+                        {<<"country">>, string, false}, {<<"confidence">>, string, false}]},
+    Satellite = {object, [{<<"provider">>, string, false}, {<<"provider_name">>, string, false},
+                          {<<"orbit">>, string, false}, {<<"segment">>, string, false},
+                          {<<"country">>, string, false}, {<<"asn">>, integer, false},
+                          {<<"confidence">>, string, false}]},
+    Ssh = {object, [{<<"port">>, integer, false}, {<<"banner">>, string, false},
+                    {<<"host_key_fp">>, string, false}, {<<"session_ok">>, boolean, false},
+                    {<<"first_seen">>, string, false}, {<<"last_seen">>, string, false}]},
+    Smtp = {object, [{<<"port">>, integer, false}, {<<"banner">>, string, false},
+                     {<<"session_ok">>, boolean, false}, {<<"first_seen">>, string, false},
+                     {<<"last_seen">>, string, false}]},
+    Web = {object, [{<<"port">>, integer, true}, {<<"tls_ok">>, boolean, true},
+                    {<<"session_ok">>, boolean, true}, {<<"status_code">>, integer, true},
+                    {<<"server">>, string, true}, {<<"location">>, string, true},
+                    {<<"title">>, string, true}, {<<"cert_subject_cn">>, string, true},
+                    {<<"cert_subject_o">>, string, true}, {<<"cert_issuer_dn">>, string, true},
+                    {<<"cert_browser_trusted">>, boolean, true}, {<<"tls_version">>, string, true},
+                    {<<"first_seen">>, string, true}, {<<"last_seen">>, string, true}]},
+    DnsResolver = {object, [{<<"port">>, integer, false}, {<<"recursion_available">>, boolean, false},
+                            {<<"rcode">>, integer, false}, {<<"answer_correct">>, boolean, false},
+                            {<<"first_seen">>, string, false}, {<<"last_seen">>, string, false}]},
+    BitTorrent = {object, [{<<"verified">>, boolean, false}, {<<"id_matches_ip">>, boolean, false},
+                           {<<"first_seen">>, string, false}, {<<"last_seen">>, string, false},
+                           {<<"last_reachable">>, string, false}, {<<"days_seen">>, integer, false},
+                           {<<"num_ports">>, integer, false}, {<<"peak_num_ports">>, integer, false},
+                           {<<"indexer">>, boolean, false}, {<<"clients">>, {list, string}, false}]},
+    Company = {object, [{<<"name">>, string, true}, {<<"domain">>, string, true},
+                        {<<"type">>, string, false}, {<<"country">>, string, false}]},
+    Abuse = {object, [{<<"email">>, string, true}, {<<"name">>, string, false},
+                      {<<"phone">>, string, false}, {<<"address">>, string, false},
+                      {<<"country">>, string, false}, {<<"network">>, string, false},
+                      {<<"validated">>, boolean, false}, {<<"unvalidated_since">>, string, false}]},
     {object, [{<<"ip">>, string, true}, {<<"is_vpn">>, boolean, true} | Flags] ++
              [{<<"vpn">>, {object, [{<<"provider">>, string, false}, {<<"last_seen">>, date, false},
                                      {<<"confidence">>, string, false}, {<<"method">>, string, false},
@@ -895,15 +931,26 @@ lookup_shape() ->
                                           {<<"num_ports">>, integer, false}, {<<"num_proxies">>, integer, false},
                                           {<<"last_seen">>, date, false}, {<<"last_usable">>, string, false}]},
                false},
+              {<<"carrier">>, Carrier, false}, {<<"satellite">>, Satellite, false},
+              {<<"ssh">>, Ssh, false}, {<<"smtp">>, Smtp, false}, {<<"web">>, {list, Web}, false},
+              {<<"dns_resolver">>, DnsResolver, false}, {<<"bittorrent">>, BitTorrent, false},
+              {<<"company">>, Company, false}, {<<"hostname">>, string, false}, {<<"abuse">>, Abuse, false},
               {<<"location">>, {object, [{Key, string, true} || Key <- [<<"continent">>, <<"continent_name">>,
                                                                      <<"country">>, <<"country_name">>,
                                                                      <<"timezone">>, <<"currency_code">>,
                                                                      <<"currency_name">>, <<"currency_symbol">>,
-                                                                     <<"flag_emoji">>, <<"flag_unicode">>]]},
+                                                                     <<"flag_emoji">>, <<"flag_unicode">>]]
+                                        ++ [{<<"region">>, string, false}, {<<"region_code">>, string, false},
+                                            {<<"city">>, string, false}, {<<"postal_code">>, string, false},
+                                            {<<"latitude">>, number, false}, {<<"longitude">>, number, false},
+                                            {<<"accuracy_radius">>, integer, false},
+                                            {<<"geoname_id">>, string, false}, {<<"dma_code">>, string, false},
+                                            {<<"last_changed">>, string, false}]},
                false},
               {<<"asn">>, {object, [{<<"asn">>, integer, true}, {<<"name">>, string, true},
                                      {<<"domain">>, string, true}, {<<"type">>, string, true},
-                                     {<<"prefix">>, string, true}]}, false}]}.
+                                     {<<"prefix">>, string, true}, {<<"country">>, string, false},
+                                     {<<"rpki_status">>, string, false}]}, false}]}.
 
 entitlement_shape() ->
     {object, [{<<"org_id">>, string, true},

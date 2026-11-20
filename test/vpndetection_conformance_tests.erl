@@ -7,6 +7,12 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+%% The members a lookup case's `expect' and `bogonResponse' compare whole.
+-define(LOOKUP_MEMBERS, [<<"vpn">>, <<"hosting">>, <<"dcproxy">>, <<"pubproxy">>, <<"location">>, <<"asn">>,
+                         <<"carrier">>, <<"satellite">>, <<"ssh">>, <<"smtp">>, <<"web">>,
+                         <<"dns_resolver">>, <<"bittorrent">>, <<"company">>, <<"hostname">>, <<"abuse">>]).
+-define(BOGON_MEMBERS, [<<"location">>, <<"asn">>, <<"web">>, <<"hostname">>, <<"company">>, <<"abuse">>]).
+
 is_bogon_test_() ->
     [{binary_to_list(<<Ip/binary, " (", Why/binary, ")">>),
       ?_assertEqual(Expect, vpndetection:is_bogon(Ip))}
@@ -78,7 +84,9 @@ bogon_is_answered_locally_in_the_widest_shape_test() ->
     #{<<"flagsFalse">> := Flags, <<"emptyObjects">> := Objects} = Bogon = corpus(<<"bogonResponse">>),
     [?assertEqual({F, false}, {F, maps:get(atom(F), Result, missing)}) || F <- Flags],
     [?assertEqual({O, #{}}, {O, maps:get(atom(O), Result, missing)}) || O <- Objects],
-    [assert_detail(Obj, Bogon, Result) || Obj <- [<<"location">>, <<"asn">>]],
+    %% Every key is read, so a member the corpus adds cannot pass here unasserted.
+    ?assertEqual([], maps:keys(Bogon) -- [<<"why">>, <<"flagsFalse">>, <<"emptyObjects">> | ?BOGON_MEMBERS]),
+    [assert_detail(Obj, Bogon, Result) || Obj <- ?BOGON_MEMBERS],
     ?assertEqual(0, vpndetection_stub:calls(Stub)),
     vpndetection_stub:stop(Stub).
 
@@ -103,22 +111,35 @@ assert_shape(#{<<"body">> := Body, <<"status">> := Status, <<"expect">> := Expec
      || K <- maps:get(<<"absent">>, Expect, [])],
     [?assertEqual({K, #{}}, {K, maps:get(atom(K), Result, missing)})
      || K <- maps:get(<<"emptyPresent">>, Expect, [])],
-    [assert_detail(Obj, Expect, Result)
-     || Obj <- [<<"vpn">>, <<"hosting">>, <<"dcproxy">>, <<"pubproxy">>, <<"location">>, <<"asn">>]],
+    %% Every key is read, so an expectation the corpus adds cannot pass here
+    %% unasserted.
+    ?assertEqual([], maps:keys(Expect) -- [<<"ip">>, <<"isBogon">>, <<"present">>, <<"absent">>,
+                                           <<"emptyPresent">> | ?LOOKUP_MEMBERS]),
+    [assert_detail(Obj, Expect, Result) || Obj <- ?LOOKUP_MEMBERS],
     vpndetection:close(Client),
     vpndetection_stub:stop(Stub).
 
+%% A member the case names: a detail object key for key, a list such as `web'
+%% row for row, and a value such as `hostname' as it is.
 assert_detail(Obj, Expect, Result) ->
     case maps:find(Obj, Expect) of
-        {ok, Detail} ->
-            Got = maps:get(atom(Obj), Result, missing),
-            maps:foreach(fun(K, V) ->
-                ?assertEqual({Obj, K, V}, {Obj, K, maps:get(atom(K), Got, missing)})
-            end, Detail),
-            ?assertEqual({Obj, map_size(Detail)}, {Obj, map_size(Got)});
+        {ok, Want} ->
+            assert_member(Obj, Want, maps:get(atom(Obj), Result, missing));
         error ->
             ok
     end.
+
+assert_member(Obj, Want, Got) when is_map(Want) ->
+    ?assertEqual({Obj, true}, {Obj, is_map(Got)}),
+    maps:foreach(fun(K, V) ->
+        ?assertEqual({Obj, K, V}, {Obj, K, maps:get(atom(K), Got, missing)})
+    end, Want),
+    ?assertEqual({Obj, map_size(Want)}, {Obj, map_size(Got)});
+assert_member(Obj, Want, Got) when is_list(Want) ->
+    ?assertEqual({Obj, length(Want)}, {Obj, length(Got)}),
+    lists:foreach(fun({W, G}) -> assert_member(Obj, W, G) end, lists:zip(Want, Got));
+assert_member(Obj, Want, Got) ->
+    ?assertEqual({Obj, Want}, {Obj, Got}).
 
 errors_are_classified_by_range_and_by_retry_after_test_() ->
     [{binary_to_list(Name), fun() -> assert_error(Case) end}

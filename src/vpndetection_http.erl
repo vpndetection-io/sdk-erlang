@@ -54,7 +54,7 @@
 %% null `bytes' on a refused download stays an answer. `date' is RFC 3339's
 %% full-date and `date_time' its date-time with a zone, each on a day and at a
 %% time that exist.
--type shape() :: string | integer | boolean | object | date | date_time
+-type shape() :: string | integer | number | boolean | object | date | date_time
                | {list, shape()} | {map_of, shape()} | {object, [{binary(), shape(), boolean()}]}.
 
 -export_type([shape/0]).
@@ -152,6 +152,7 @@ conforms(Shape, Value) ->
 
 conforms(string, Value, _At) when is_binary(Value) -> ok;
 conforms(integer, Value, _At) when is_integer(Value) -> ok;
+conforms(number, Value, _At) when is_number(Value) -> ok;
 conforms(boolean, Value, _At) when is_boolean(Value) -> ok;
 conforms(object, Value, _At) when is_map(Value) -> ok;
 conforms(date, Value, At) when is_binary(Value) ->

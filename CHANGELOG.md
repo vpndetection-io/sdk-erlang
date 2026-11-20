@@ -2,6 +2,16 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.17.0 - 2026-11-20
+
+### Features
+
+- Read the network, service, company and abuse members of an answer ([`59a453b`](https://github.com/vpndetection-io/sdk-erlang/commit/59a453b2acb7f543845091f09f23a62de262b096))
+
+### Fixes
+
+- Cache a spent trial's or a reached cap's answer for a minute at most ([`588ee96`](https://github.com/vpndetection-io/sdk-erlang/commit/588ee966c7eebbb782c48bce40e63e81848e354f))
+
 ## 3.16.1 - 2026-11-19
 
 ### Fixes

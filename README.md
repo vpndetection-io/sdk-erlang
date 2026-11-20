@@ -33,7 +33,7 @@ Every call answers `{ok, Term}` or `{error, Error}`. A client holds a cache, whi
 
 ### With an API key
 
-Every paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, and the provider (its ID and its name), confidence and last-seen detail behind each flag. The plans differ only in how many lookups they include, and a free account tries every field, 100 lookups a day. Create a key in the [console](https://app.vpndetection.io), then pass it in:
+Every paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, and the provider (its ID and its name), confidence and last-seen detail behind each flag. The plans differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.vpndetection.io), then pass it in:
 
 ```erlang
 Client = vpndetection:new(#{api_key => <<"your-api-key">>}),
@@ -251,12 +251,12 @@ Each redirect URI must be https on a public host name, or http on a loopback add
 
 ### Absent is not false
 
-Unlimited leaves out `is_hosting`, `is_cdn` and the four proxy flags, and of the detail behind each flag it answers only Tor's and relay's; a free-plan key's answer carries `trial_expired`, true once its daily trial is spent, and a paid key's carries `cap_reached`, true once its organization's overage cap is reached and the answer has Unlimited's. Fields your plan does not include are simply not in the result map. Absent means "not in your plan"; a present `false` means "we checked, and no".
+Unlimited leaves out `is_hosting`, `is_cdn` and the four proxy flags, and of the detail behind each flag it answers only Tor's and relay's; a free-plan key's answer carries `trial_expired`, true once its trial is spent, and a paid key's carries `cap_reached`, true once its organization's overage cap is reached and the answer has Unlimited's. Fields your plan does not include are simply not in the result map. Absent means "not in your plan"; a present `false` means "we checked, and no".
 
 ```erlang
 maps:get(is_hosting, Result, false).   % when you only want the flag
 maps:is_key(is_hosting, Result).       % false on Unlimited: not in your plan
-maps:get(trial_expired, Result, false). % true: a free-plan key's daily trial is spent
+maps:get(trial_expired, Result, false). % true: a free-plan key's trial is spent
 maps:get(cap_reached, Result, false).   % true: a paid key past its overage cap
 ```
 

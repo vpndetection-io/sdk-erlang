@@ -241,7 +241,7 @@ my_entitlement(Client) ->
 %%
 %% Usage counts against the ALLOWANCE WINDOW - on a paid plan the anniversary
 %% of the subscription, not the calendar month and not the billing period, and
-%% on the free plan the UTC day - and it is the same number a lookup is gated
+%% on the free plan the trial - and it is the same number a lookup is gated
 %% on. `hard_limit' is `null' when we never stop serving, which is not the
 %% same as a limit of zero.
 %%

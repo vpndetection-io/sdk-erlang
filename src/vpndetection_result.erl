@@ -27,6 +27,9 @@
     is_relay => boolean(),
     is_tor => boolean(),
     is_cdn => boolean(),
+    %% Whether an automated client uses the address: a crawler, an uptime
+    %% monitor, a scanner or a webhook sender. On every answer, every plan.
+    is_bot => boolean(),
     is_resproxy => boolean(),
     is_dcproxy => boolean(),
     is_mobproxy => boolean(),
@@ -44,6 +47,9 @@
     relay => detail(),
     tor => detail(),
     cdn => detail(),
+    %% Whose bot uses the address, what it does and whether its operator vouches
+    %% for it. Paid plans; `#{}' when `is_bot' is false.
+    bot => detail(),
     resproxy => detail(),
     dcproxy => detail(),
     mobproxy => detail(),
@@ -122,7 +128,13 @@
     days_seen => integer(),
     peak_num_ports => integer(),
     indexer => boolean(),
-    clients => [binary()]
+    clients => [binary()],
+    %% The bot detail: the bots the address serves and what they do, each list
+    %% in the order served, and how the address is known to be the operator's.
+    agents => [binary()],
+    categories => [binary()],
+    identity => binary(),
+    verified_by => binary()
 }.
 
 %% Where the address is, on every answer, with or without a key: every key
@@ -215,6 +227,7 @@ bogon(Ip) ->
         <<"is_relay">> => false,
         <<"is_tor">> => false,
         <<"is_cdn">> => false,
+        <<"is_bot">> => false,
         <<"is_resproxy">> => false,
         <<"is_dcproxy">> => false,
         <<"is_mobproxy">> => false,
@@ -232,6 +245,7 @@ bogon(Ip) ->
         <<"relay">> => #{},
         <<"tor">> => #{},
         <<"cdn">> => #{},
+        <<"bot">> => #{},
         <<"resproxy">> => #{},
         <<"dcproxy">> => #{},
         <<"mobproxy">> => #{},
@@ -283,6 +297,7 @@ key(<<"is_hosting">>) -> is_hosting;
 key(<<"is_relay">>) -> is_relay;
 key(<<"is_tor">>) -> is_tor;
 key(<<"is_cdn">>) -> is_cdn;
+key(<<"is_bot">>) -> is_bot;
 key(<<"is_resproxy">>) -> is_resproxy;
 key(<<"is_dcproxy">>) -> is_dcproxy;
 key(<<"is_mobproxy">>) -> is_mobproxy;
@@ -294,6 +309,7 @@ key(<<"hosting">>) -> hosting;
 key(<<"relay">>) -> relay;
 key(<<"tor">>) -> tor;
 key(<<"cdn">>) -> cdn;
+key(<<"bot">>) -> bot;
 key(<<"resproxy">>) -> resproxy;
 key(<<"dcproxy">>) -> dcproxy;
 key(<<"mobproxy">>) -> mobproxy;
@@ -374,6 +390,10 @@ key(<<"days_seen">>) -> days_seen;
 key(<<"peak_num_ports">>) -> peak_num_ports;
 key(<<"indexer">>) -> indexer;
 key(<<"clients">>) -> clients;
+key(<<"agents">>) -> agents;
+key(<<"categories">>) -> categories;
+key(<<"identity">>) -> identity;
+key(<<"verified_by">>) -> verified_by;
 key(<<"region">>) -> region;
 key(<<"region_code">>) -> region_code;
 key(<<"city">>) -> city;

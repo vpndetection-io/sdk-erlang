@@ -75,6 +75,25 @@ a_condition_reaches_the_evidence_fields_test() ->
     ?assertEqual(true, maps:get(blocked, Hit)),
     vpndetection_stub:stop(Stub2).
 
+%% A served bot from a public address is blocked on `is_bot', and on its
+%% verified detail; a served non-bot from the same address passes.
+a_condition_on_is_bot_blocks_a_served_bot_and_passes_anyone_else_test() ->
+    Bot = #{<<"is_vpn">> => false, <<"is_bot">> => true,
+            <<"bot">> => #{<<"provider">> => <<"google">>, <<"agents">> => [<<"Googlebot">>],
+                           <<"verified">> => true}},
+    Human = #{<<"is_vpn">> => false, <<"is_bot">> => false, <<"bot">> => #{}},
+    Decide = fun(Body, Condition) ->
+        {Stub, Core} = serving(Body, #{ip_selector => fixed(?PUBLIC_IP), block_condition => Condition}),
+        {ok, Found} = vpndetection_middleware:evaluate(Core, view(undefined, #{})),
+        Sent = vpndetection_stub:calls(Stub),
+        vpndetection_stub:stop(Stub),
+        {maps:get(blocked, Found), Sent}
+    end,
+    ?assertEqual({true, 1}, Decide(Bot, #{is_bot => true})),
+    ?assertEqual({false, 1}, Decide(Human, #{is_bot => true})),
+    ?assertEqual({true, 1}, Decide(Bot, #{bot => #{verified => true}})),
+    ?assertEqual({false, 1}, Decide(Human, #{bot => #{verified => true}})).
+
 fails_open_on_a_lookup_error_and_closed_only_when_asked_test() ->
     Routes = #{?PUBLIC_IP => #{status => 500, body => #{<<"error">> => <<"boom">>}}},
 

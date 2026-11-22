@@ -18,7 +18,7 @@ Requires Erlang/OTP 27 or newer. There are no runtime dependencies: everything t
 
 ## Usage
 
-**No API key needed to start.** Unlimited, the free plan, answers `ip`, `is_vpn`, Tor and relay detection, `is_anycast`, `hostname` (the reverse DNS name), country-level `location` and `asn` with the AS's country and RPKI status, with no daily or monthly cap, with a key or without one.
+**No API key needed to start.** Unlimited, the free plan, answers `ip`, `is_vpn`, Tor and relay detection, `is_anycast`, `is_bot` (whether an automated client, such as a search engine's crawler, uses the address), `hostname` (the reverse DNS name), country-level `location` and `asn` with the AS's country and RPKI status, with no daily or monthly cap, with a key or without one.
 
 ```erlang
 Client = vpndetection:new(),
@@ -33,7 +33,7 @@ Every call answers `{ok, Term}` or `{error, Error}`. A client holds a cache, whi
 
 ### With an API key
 
-Every paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, the carrier and satellite flags, the five service flags (SSH, SMTP, web, DNS resolver and BitTorrent), city-level `location`, the `company` and the `abuse` contact, and the provider (its ID and its name), confidence and last-seen detail behind each flag. The plans differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.vpndetection.io), then pass it in:
+Every paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, the carrier and satellite flags, the five service flags (SSH, SMTP, web, DNS resolver and BitTorrent), city-level `location`, the `company` and the `abuse` contact, the `bot` detail (whose bot uses the address, what it does and whether its operator vouches for the address), and the provider (its ID and its name), confidence and last-seen detail behind each flag. The plans differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.vpndetection.io), then pass it in:
 
 ```erlang
 Client = vpndetection:new(#{api_key => <<"your-api-key">>}),
@@ -42,6 +42,7 @@ Client = vpndetection:new(#{api_key => <<"your-api-key">>}),
 maps:get(is_vpn, Result).                        % true
 maps:get(is_hosting, Result).                    % true, on a paid plan
 maps:get(provider, maps:get(vpn, Result)).       % <<"nordvpn">>, on a paid plan
+maps:get(is_bot, Result).                        % whether a bot such as a crawler uses it
 ```
 
 A detail map that is present but empty (`#{}`) means the flag above it is false. A populated one always carries every one of its keys.
@@ -251,7 +252,7 @@ Each redirect URI must be https on a public host name, or http on a loopback add
 
 ### Absent is not false
 
-Unlimited leaves out `is_hosting`, `is_cdn`, the four proxy flags, the carrier, satellite and service flags, `company` and `abuse`, and of the detail behind each flag it answers only Tor's and relay's; a free-plan key's answer carries `trial_expired`, true once its trial is spent, and a paid key's carries `cap_reached`, true once its organization's overage cap is reached and the answer has Unlimited's. Fields your plan does not include are simply not in the result map. Absent means "not in your plan"; a present `false` means "we checked, and no".
+Unlimited leaves out `is_hosting`, `is_cdn`, the four proxy flags, the carrier, satellite and service flags, `company`, `abuse` and `bot`, and of the detail behind each flag it answers only Tor's and relay's; a free-plan key's answer carries `trial_expired`, true once its trial is spent, and a paid key's carries `cap_reached`, true once its organization's overage cap is reached and the answer has Unlimited's. Fields your plan does not include are simply not in the result map. Absent means "not in your plan"; a present `false` means "we checked, and no".
 
 ```erlang
 maps:get(is_hosting, Result, false).   % when you only want the flag

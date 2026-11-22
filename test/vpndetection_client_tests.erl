@@ -859,12 +859,15 @@ assert_unreadable(Body, Call) ->
 %% the call cannot read. Through 3.9.0 every one came back as served. Each case
 %% is a well-formed answer with one member changed, and each well-formed answer
 %% reads, so a case fails on its one change alone.
--define(LOOKUP_OK, <<"{\"ip\":\"1.1.1.1\",\"is_vpn\":true,\"is_dcproxy\":true,\"is_pubproxy\":true,"
+-define(LOOKUP_OK, <<"{\"ip\":\"1.1.1.1\",\"is_vpn\":true,\"is_dcproxy\":true,\"is_pubproxy\":true,\"is_bot\":true,"
     "\"vpn\":{\"provider\":\"p\",\"last_seen\":\"2026-10-20\",\"confidence\":\"high\"},"
     "\"dcproxy\":{\"provider\":\"d\",\"first_seen\":\"2026-10-01\",\"last_seen\":\"2026-10-20\",\"hits\":3,"
     "\"hits_days_pct\":10,\"providers_num\":1},"
     "\"pubproxy\":{\"entry\":true,\"exit\":false,\"protocols\":[\"http\"],\"num_ports\":2,\"num_proxies\":0,"
     "\"last_seen\":\"2026-10-20\",\"last_usable\":\"\"},"
+    "\"bot\":{\"provider\":\"google\",\"provider_name\":\"Google\",\"agents\":[\"Googlebot\"],"
+    "\"categories\":[\"search_engine\"],\"verified\":true,\"identity\":\"verified\",\"verified_by\":\"list\","
+    "\"confidence\":\"high\",\"first_seen\":\"2026-11-21\",\"last_seen\":\"2026-11-21\"},"
     "\"asn\":{\"asn\":5,\"name\":\"n\",\"domain\":\"d\",\"type\":\"t\",\"prefix\":\"p\"}}">>).
 -define(ENTITLEMENT_OK, <<"{\"org_id\":\"o\",\"apikey\":{\"id\":\"k\",\"expires\":null,\"allowed_cidrs\":[]},"
     "\"plan\":{\"key\":\"max\",\"name\":\"Max\",\"tier\":\"max\"},\"usage\":{\"requests\":1,\"quota\":10,\"hard_limit\":null,"
@@ -903,6 +906,11 @@ an_answer_of_the_wrong_shape_is_a_retried_server_error_test_() ->
         {lookup, <<"[\"http\"]">>, <<"[null]">>},
         {lookup, <<"[\"http\"]">>, <<"[1]">>},
         {lookup, <<"\"asn\":{\"asn\":5,\"name\":\"n\",">>, <<"\"asn\":{\"asn\":5,">>},
+        {lookup, <<"\"is_bot\":true">>, <<"\"is_bot\":\"true\"">>},
+        {lookup, <<"[\"Googlebot\"]">>, <<"\"Googlebot\"">>},
+        {lookup, <<"[\"search_engine\"]">>, <<"[1]">>},
+        {lookup, <<"\"verified\":true">>, <<"\"verified\":\"yes\"">>},
+        {lookup, <<"\"identity\":\"verified\"">>, <<"\"identity\":1">>},
         {lookup, <<"\"last_seen\":\"2026-10-20\",\"confidence\"">>, <<"\"last_seen\":\"x\",\"confidence\"">>},
         {lookup, <<"\"last_seen\":\"2026-10-20\",\"confidence\"">>, <<"\"last_seen\":\"tomorrow\",\"confidence\"">>},
         {lookup, <<"\"last_seen\":\"2026-10-20\",\"confidence\"">>, <<"\"last_seen\":\"monday\",\"confidence\"">>},

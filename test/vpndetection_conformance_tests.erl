@@ -8,7 +8,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 %% The members a lookup case's `expect' and `bogonResponse' compare whole.
--define(LOOKUP_MEMBERS, [<<"vpn">>, <<"hosting">>, <<"dcproxy">>, <<"pubproxy">>, <<"location">>, <<"asn">>,
+-define(LOOKUP_MEMBERS, [<<"vpn">>, <<"hosting">>, <<"dcproxy">>, <<"pubproxy">>, <<"bot">>, <<"location">>, <<"asn">>,
                          <<"carrier">>, <<"satellite">>, <<"ssh">>, <<"smtp">>, <<"web">>,
                          <<"dns_resolver">>, <<"bittorrent">>, <<"company">>, <<"hostname">>, <<"abuse">>]).
 -define(BOGON_MEMBERS, [<<"location">>, <<"asn">>, <<"web">>, <<"hostname">>, <<"company">>, <<"abuse">>]).

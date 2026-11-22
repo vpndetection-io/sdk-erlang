@@ -2,6 +2,16 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.18.0 - 2026-11-22
+
+### Features
+
+- Answer is_bot and the bot detail on every lookup ([`bc88383`](https://github.com/vpndetection-io/sdk-erlang/commit/bc88383af7428a9fb688256aa8295f91e4b16401))
+
+### Fixes
+
+- Require the AS's country and RPKI status, as the API always sends them ([`10a434a`](https://github.com/vpndetection-io/sdk-erlang/commit/10a434a4d6d63844c9205bc5d2231edbb3512a65))
+
 ## 3.17.0 - 2026-11-20
 
 ### Features

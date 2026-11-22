@@ -954,8 +954,8 @@ lookup_shape() ->
                false},
               {<<"asn">>, {object, [{<<"asn">>, integer, true}, {<<"name">>, string, true},
                                      {<<"domain">>, string, true}, {<<"type">>, string, true},
-                                     {<<"prefix">>, string, true}, {<<"country">>, string, false},
-                                     {<<"rpki_status">>, string, false}]}, false}]}.
+                                     {<<"prefix">>, string, true}, {<<"country">>, string, true},
+                                     {<<"rpki_status">>, string, true}]}, false}]}.
 
 entitlement_shape() ->
     {object, [{<<"org_id">>, string, true},

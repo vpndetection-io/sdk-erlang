@@ -868,7 +868,8 @@ assert_unreadable(Body, Call) ->
     "\"bot\":{\"provider\":\"google\",\"provider_name\":\"Google\",\"agents\":[\"Googlebot\"],"
     "\"categories\":[\"search_engine\"],\"verified\":true,\"identity\":\"verified\",\"verified_by\":\"list\","
     "\"confidence\":\"high\",\"first_seen\":\"2026-11-21\",\"last_seen\":\"2026-11-21\"},"
-    "\"asn\":{\"asn\":5,\"name\":\"n\",\"domain\":\"d\",\"type\":\"t\",\"prefix\":\"p\"}}">>).
+    "\"asn\":{\"asn\":5,\"name\":\"n\",\"domain\":\"d\",\"type\":\"t\",\"prefix\":\"p\",\"country\":\"US\","
+    "\"rpki_status\":\"valid\"}}">>).
 -define(ENTITLEMENT_OK, <<"{\"org_id\":\"o\",\"apikey\":{\"id\":\"k\",\"expires\":null,\"allowed_cidrs\":[]},"
     "\"plan\":{\"key\":\"max\",\"name\":\"Max\",\"tier\":\"max\"},\"usage\":{\"requests\":1,\"quota\":10,\"hard_limit\":null,"
     "\"window_start\":\"2026-10-01T00:00:00Z\",\"window_end\":\"2026-11-01T00:00:00.5+02:00\"}}">>).
@@ -906,6 +907,11 @@ an_answer_of_the_wrong_shape_is_a_retried_server_error_test_() ->
         {lookup, <<"[\"http\"]">>, <<"[null]">>},
         {lookup, <<"[\"http\"]">>, <<"[1]">>},
         {lookup, <<"\"asn\":{\"asn\":5,\"name\":\"n\",">>, <<"\"asn\":{\"asn\":5,">>},
+        {lookup, <<"\"prefix\":\"p\",\"country\":\"US\",">>, <<"\"prefix\":\"p\",">>},
+        {lookup, <<"\"country\":\"US\",\"rpki_status\":\"valid\"">>, <<"\"country\":\"US\"">>},
+        {lookup, <<"\"country\":\"US\"">>, <<"\"country\":null">>},
+        {lookup, <<"\"rpki_status\":\"valid\"">>, <<"\"rpki_status\":null">>},
+        {lookup, <<"\"country\":\"US\"">>, <<"\"country\":1">>},
         {lookup, <<"\"is_bot\":true">>, <<"\"is_bot\":\"true\"">>},
         {lookup, <<"[\"Googlebot\"]">>, <<"\"Googlebot\"">>},
         {lookup, <<"[\"search_engine\"]">>, <<"[1]">>},

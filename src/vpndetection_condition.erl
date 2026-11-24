@@ -137,6 +137,11 @@ member(_Name, _Value) -> absent.
 
 matches_value(_Want, absent) ->
     false;
+%% A member the answer holds as a list (`protocols', a `web' row, `agents')
+%% matches when any one element does, so an object term must hold on a single
+%% element. A JSON string decodes to a binary, so a list here is always an array.
+matches_value(Want, Got) when is_list(Got) ->
+    lists:any(fun(Element) -> matches_value(Want, Element) end, Got);
 %% Reachable only inside an any-of, since a bare one is dropped by its zero
 %% constraint count. It is a term that was written to be ignored, so it matches
 %% nothing rather than comparing as the atom it happens to be.

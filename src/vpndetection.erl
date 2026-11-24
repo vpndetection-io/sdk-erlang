@@ -398,10 +398,16 @@ database_downloads(Client) ->
 -spec database_downloads(client(), downloads_options()) ->
     {ok, [map()]} | {error, vpndetection_error:error()}.
 database_downloads(Client, Options) ->
-    Query = case maps:find(limit, Options) of
-        {ok, Limit} -> [{<<"limit">>, integer_to_binary(Limit)}];
-        error -> []
-    end,
+    case maps:find(limit, Options) of
+        error ->
+            downloads(Client, Options, []);
+        {ok, Limit} when is_integer(Limit), Limit >= 1 ->
+            downloads(Client, Options, [{<<"limit">>, integer_to_binary(Limit)}]);
+        {ok, Limit} ->
+            refused(io_lib:format("limit must be an integer of 1 or more, not ~p", [Limit]))
+    end.
+
+downloads(Client, Options, Query) ->
     checked(Options, fun() ->
         get_json(bound(Client, Options), <<"/api/v1/database/downloads">>, Query, {<<"downloads">>, {list, download_shape()}})
     end).

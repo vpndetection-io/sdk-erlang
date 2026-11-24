@@ -27,6 +27,17 @@ a_cache_of_one_entry_and_one_millisecond_builds_and_serves_test() ->
     ?assertEqual(2, counters:get(Count, 1)),
     vpndetection:close(Client).
 
+%%% ------------------------------------------------------- database_downloads/2
+
+a_downloads_limit_that_is_no_count_is_a_bad_request_and_sends_nothing_test_() ->
+    [{lists:flatten(io_lib:format("limit => ~p", [Limit])), fun() ->
+        {Http, Count} = counting(<<"{\"downloads\":[]}">>),
+        Client = vpndetection:new(#{api_key => <<"k">>, cache => false, http => Http}),
+        ?assertMatch({error, #{kind := bad_request, retryable := false}},
+                     vpndetection:database_downloads(Client, #{limit => Limit})),
+        ?assertEqual(0, counters:get(Count, 1))
+     end} || Limit <- [1.5, x, -1, 0, "5", <<"5">>]].
+
 %%% ------------------------------------------------------------------- helpers
 
 answer() ->

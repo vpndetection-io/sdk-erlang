@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.20.0 - 2026-11-24
+
+### Fixes
+
+- Middleware: a condition on a list member matches any element ([`1f2f05c`](https://github.com/vpndetection-io/sdk-erlang/commit/1f2f05c56966c4c6749346920efd2a1c04b3b2cb))
+
 ## 3.19.1 - 2026-11-24
 
 ### Fixes

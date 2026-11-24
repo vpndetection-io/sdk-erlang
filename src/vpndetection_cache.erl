@@ -21,9 +21,12 @@
 -export([board/3, land/2, abandon/2, await/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
--export_type([cache/0, outcome/0]).
+-export_type([cache/0, outcome/0, key/0]).
 
 -type cache() :: #{pid := pid(), entries := ets:table()}.
+%% An address, or an address and the user agent sent with it: an answer that
+%% carries a verdict is held apart from the address's plain answer.
+-type key() :: binary() | {binary(), binary()}.
 -type answer() :: {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}.
 %% What a waiter hears: the leader's answer, or `retry' when the leader died first.
 -type outcome() :: answer() | retry.
@@ -35,9 +38,9 @@
 -record(state, {entries :: ets:table(), order :: ets:table(), max :: pos_integer(),
                 ttl_ms :: pos_integer(), seq = 0 :: non_neg_integer(),
                 %% Each address in the air: who leads it, and who awaits it under which ref.
-                flights = #{} :: #{binary() => {pid(), [{pid(), reference()}]}},
+                flights = #{} :: #{key() => {pid(), [{pid(), reference()}]}},
                 %% Each leader's monitor and the addresses it leads.
-                leaders = #{} :: #{pid() => {reference(), #{binary() => true}}},
+                leaders = #{} :: #{pid() => {reference(), #{key() => true}}},
                 %% The monitor on the process that built the client.
                 owner :: reference()}).
 
@@ -68,7 +71,7 @@ alive(#{pid := Pid}) ->
 %% A cache whose owner has gone answers `miss' rather than raising: a miss is
 %% always safe, and taking a caller's request path down because an optimization
 %% went away would not be.
--spec get(cache(), binary()) -> {ok, vpndetection_result:result()} | miss.
+-spec get(cache(), key()) -> {ok, vpndetection_result:result()} | miss.
 get(#{pid := Pid, entries := Entries}, Ip) ->
     try ets:lookup(Entries, Ip) of
         [{Ip, Result, ExpiresAt, _Seq}] ->
@@ -82,7 +85,7 @@ get(#{pid := Pid, entries := Entries}, Ip) ->
         error:badarg -> miss
     end.
 
--spec put(cache(), binary(), vpndetection_result:result()) -> ok.
+-spec put(cache(), key(), vpndetection_result:result()) -> ok.
 put(#{pid := Pid}, Ip, Result) ->
     try
         gen_server:call(Pid, {put, Ip, Result})
@@ -97,8 +100,8 @@ put(#{pid := Pid}, Ip, Result) ->
 %% caches its answer in the same step it leaves the board: a miss here with no
 %% flight means nobody is in the air. A cache whose owner has gone answers
 %% `lead' for every address, and the caller sends them all itself.
--spec board(cache(), [binary()], reference()) ->
-    [{binary(), {ok, vpndetection_result:result()} | lead | wait}].
+-spec board(cache(), [key()], reference()) ->
+    [{key(), {ok, vpndetection_result:result()} | lead | wait}].
 board(#{pid := Pid}, Ips, Ref) ->
     try
         gen_server:call(Pid, {board, Ips, Ref}, infinity)
@@ -108,7 +111,7 @@ board(#{pid := Pid}, Ips, Ref) ->
 
 %% @doc Land the answers to addresses the caller leads. A success is cached, and
 %% every answer reaches the address's waiters; an error is cached for none.
--spec land(cache(), [{binary(), answer()}]) -> ok.
+-spec land(cache(), [{key(), answer()}]) -> ok.
 land(#{pid := Pid}, Answers) ->
     try
         gen_server:call(Pid, {land, Answers}, infinity)
@@ -118,7 +121,7 @@ land(#{pid := Pid}, Answers) ->
 
 %% @doc Take addresses the caller leads off the board without an answer, sending
 %% their waiters back to ask again: for a leader that failed before it had one.
--spec abandon(cache(), [binary()]) -> ok.
+-spec abandon(cache(), [key()]) -> ok.
 abandon(#{pid := Pid}, Ips) ->
     try
         gen_server:call(Pid, {abandon, Ips}, infinity)
@@ -129,7 +132,7 @@ abandon(#{pid := Pid}, Ips) ->
 %% @doc Wait for the addresses boarded as `wait' under `Ref'. Each answers its
 %% leader's answer, or `retry' when the leader, or the cache itself, went away
 %% before it landed one.
--spec await(cache(), reference(), [binary()]) -> #{binary() => outcome()}.
+-spec await(cache(), reference(), [key()]) -> #{key() => outcome()}.
 await(_Cache, _Ref, []) ->
     #{};
 await(#{pid := Pid}, Ref, Ips) ->

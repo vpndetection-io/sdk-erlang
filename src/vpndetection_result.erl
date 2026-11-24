@@ -13,7 +13,7 @@
 
 -export([from_wire/1, bogon/1]).
 
--export_type([result/0, detail/0, location/0, asn/0, company/0, abuse/0]).
+-export_type([result/0, detail/0, location/0, asn/0, company/0, abuse/0, user_agent/0]).
 
 %% `is_vpn', `is_bogon' and `raw' are the only keys always present. A tag here
 %% would be attached to the next FUNCTION by edoc and collide with its own,
@@ -68,6 +68,9 @@
     %% The reverse DNS (PTR) name, an empty binary where the address has none.
     hostname => binary(),
     abuse => abuse(),
+    %% What the API made of the user agent the lookup sent, with every field (a
+    %% paid plan, or the trial). Absent when no agent was sent, and on a bogon.
+    user_agent => user_agent(),
     %% On answers to a key on the free plan only: false while its organization's
     %% trial of every field lasts, true once the answer has Unlimited's.
     trial_expired => boolean(),
@@ -181,6 +184,19 @@
     domain := binary(),
     type => binary(),
     country => binary()
+}.
+
+%% The verdict on a user agent a lookup sent: `agent', the agent it names
+%% (`Googlebot', `Chrome', `Unknown' where it names none); `kind', what kind of
+%% client it says it is (`browser', `inapp', `automation', `bot', `ai-bot',
+%% `http-client' or `unknown'); and `verdict', `verified' where the agent's
+%% operator vouches for this address, `spoofed' where it does not or the address
+%% posed as the bot before, `unverifiable' for a bot nothing can confirm, and
+%% `not_bot' for a browser, an app or a script.
+-type user_agent() :: #{
+    agent := binary(),
+    kind := binary(),
+    verdict := binary()
 }.
 
 %% Who to report abuse from the address to. Paid plans.
@@ -411,4 +427,8 @@ key(<<"address">>) -> address;
 key(<<"network">>) -> network;
 key(<<"validated">>) -> validated;
 key(<<"unvalidated_since">>) -> unvalidated_since;
+key(<<"user_agent">>) -> user_agent;
+key(<<"agent">>) -> agent;
+key(<<"kind">>) -> kind;
+key(<<"verdict">>) -> verdict;
 key(Other) -> Other.

@@ -28,7 +28,7 @@
          oauth_exchange_authorization_code/6, oauth_create_pkce/0, oauth_pkce_challenge/1]).
 -export([oauth_register/2, oauth_register/3]).
 
--export_type([client/0, options/0, address/0, lookup_options/0, batch_options/0,
+-export_type([client/0, options/0, address/0, lookup_options/0, call_options/0, batch_options/0,
               downloads_options/0, download_options/0, format/0]).
 -export_type([oauth_options/0, device_authorization_options/0, authorization_url_options/0,
               register_options/0]).
@@ -73,9 +73,15 @@
 
 %% An address as text, or as the tuple `inet' and Cowboy hand one over as.
 -type address() :: binary() | string() | inet:ip_address().
--type lookup_options() :: #{retries => non_neg_integer(), timeout_ms => pos_integer() | infinity}.
+%% `user_agent' is the `User-Agent' of the request you are deciding on; an empty
+%% one is none.
+-type lookup_options() :: #{retries => non_neg_integer(), timeout_ms => pos_integer() | infinity,
+                            user_agent => binary() | string()}.
+-type call_options() :: #{retries => non_neg_integer(), timeout_ms => pos_integer() | infinity}.
+%% `user_agents' maps an address, written as it is in the list, to its agent.
 -type batch_options() :: #{retries => non_neg_integer(), concurrency => pos_integer(),
-                           timeout_ms => pos_integer() | infinity}.
+                           timeout_ms => pos_integer() | infinity,
+                           user_agents => #{address() => binary() | string()}}.
 -type downloads_options() :: #{limit => pos_integer(), timeout_ms => pos_integer() | infinity}.
 %% `build' is one build of the dataset, by the name a `database.updated' webhook
 %% gives it, so the file is the one whose `sha256' the webhook carries. Without
@@ -188,6 +194,15 @@ lookup(Client, Ip) ->
 %% `Options' overrides the client's `retries' and `timeout_ms' for this call
 %% alone. `timeout_ms' bounds each attempt, so a retried call can take longer in
 %% total.
+%%
+%% `user_agent' in `Options' sends the `User-Agent' of the request you are
+%% deciding on. With every field (a paid plan, or the trial) the answer then
+%% carries `user_agent': the agent it names, its kind, and whether this address
+%% bears it out (`verdict' is `verified', `spoofed', `unverifiable' or
+%% `not_bot'). An empty agent is none, and one past 1024 characters is sent
+%% whole, since the API cuts it there and answers. The answer is cached apart
+%% from the address's plain answer and from another agent's. A bogon is still
+%% answered locally, with no `user_agent'.
 -spec lookup(client(), address(), lookup_options()) ->
     {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}.
 lookup(Client, Ip, Options) ->
@@ -196,7 +211,7 @@ lookup(Client, Ip, Options) ->
         Addr = vpndetection_bogon:unmapped(address(Ip)),
         case vpndetection_bogon:is_bogon(Addr) of
             true -> {ok, vpndetection_result:bogon(Addr)};
-            false -> served(Client, Addr, Options)
+            false -> served(Client, Addr, agent(Options), Options)
         end
     end).
 
@@ -214,13 +229,15 @@ my_ip(Client) ->
 %%
 %% Deliberately NOT cached. The cache is keyed by address, and which address this
 %% is IS the question: a machine that moves between networks would otherwise be
-%% told where it used to be.
+%% told where it used to be. `user_agent' in `Options' is sent as {@link lookup/3}
+%% sends it.
 -spec my_ip(client(), lookup_options()) ->
     {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}.
 my_ip(Client, Options) ->
     checked(Options, fun() ->
         Retries = maps:get(retries, Options, maps:get(retries, Client)),
-        case vpndetection_http:get_json(bound(Client, Options), <<"/myip">>, [], Retries, ?LOOKUP) of
+        Query = agent_query(agent(Options)),
+        case vpndetection_http:get_json(bound(Client, Options), <<"/myip">>, Query, Retries, ?LOOKUP) of
             {ok, Body} -> {ok, vpndetection_result:from_wire(Body)};
             {error, Error} -> {error, Error}
         end
@@ -247,7 +264,7 @@ my_entitlement(Client) ->
 %%
 %% Deliberately NOT cached: the whole point is what has been spent, and a cached
 %% answer is a wrong one within seconds of the next request.
--spec my_entitlement(client(), lookup_options()) ->
+-spec my_entitlement(client(), call_options()) ->
     {ok, map()} | {error, vpndetection_error:error()}.
 my_entitlement(Client, Options) ->
     checked(Options, fun() ->
@@ -281,6 +298,12 @@ lookup_batch(Client, Ips) ->
 %% `concurrency', `retries' and `timeout_ms' are overridable here, per call, so
 %% one large batch does not need a second client built to widen it. There is no
 %% cap on how many addresses one call takes; chunking them is this function's job.
+%%
+%% `user_agents' maps an address, written as it is in `Ips', to the `User-Agent'
+%% to send with it, as {@link lookup/3}'s `user_agent' per address. A chunk
+%% sends them only when one of its addresses has one, keyed by the address as
+%% sent, so an IPv4-mapped address's agent is keyed by the IPv4 address it
+%% carries. An address with none, or an empty one, is sent with none.
 -spec lookup_batch(client(), [address()], batch_options()) ->
     #{binary() => {ok, vpndetection_result:result()} | {error, vpndetection_error:error()}}.
 lookup_batch(Client, Ips, Options) ->
@@ -294,7 +317,7 @@ lookup_batch(Client, Ips, Options) ->
         {_, {error, Error}} ->
             maps:from_list([{Ip, {error, Error}} || Ip <- Asked]);
         {Concurrency, ok} when is_integer(Concurrency), Concurrency >= 1 ->
-            Answers = batch(Client, Unique, Options, Concurrency),
+            Answers = batch(Client, Unique, agents(Options), Options, Concurrency),
             maps:from_list([{Ip, maps:get(vpndetection_bogon:unmapped(Ip), Answers)} || Ip <- Asked]);
         %% A dispatcher that may run nothing waits for ever, so this is the
         %% caller's mistake to hear about at once.
@@ -688,32 +711,33 @@ message(Path, Reason) ->
     iolist_to_binary([Path, ": ", file:format_error(Reason)]).
 
 %% Without a cache nothing is shared, since every lookup is then served.
-served(#{cache := undefined} = Client, Addr, Options) ->
-    fetch(Client, Addr, Options);
-served(#{cache := Cache} = Client, Addr, Options) ->
-    case vpndetection_cache:get(Cache, Addr) of
+served(#{cache := undefined} = Client, Addr, Agent, Options) ->
+    fetch(Client, Addr, Agent, Options);
+served(#{cache := Cache} = Client, Addr, Agent, Options) ->
+    case vpndetection_cache:get(Cache, key(Addr, Agent)) of
         {ok, Result} -> {ok, Result};
-        miss -> shared(Client, Cache, Addr, Options)
+        miss -> shared(Client, Cache, Addr, Agent, Options)
     end.
 
 %% Concurrent misses for one address share one request, a lookup's or the batch
 %% chunk carrying it: the first to board the address leads, under its own
 %% options, and every other caller awaits its answer. A leader that dies before
 %% answering sends its waiters back to ask again rather than failing them.
-shared(Client, Cache, Addr, Options) ->
+shared(Client, Cache, Addr, Agent, Options) ->
     Ref = make_ref(),
-    case vpndetection_cache:board(Cache, [Addr], Ref) of
-        [{Addr, {ok, Result}}] ->
+    Key = key(Addr, Agent),
+    case vpndetection_cache:board(Cache, [Key], Ref) of
+        [{Key, {ok, Result}}] ->
             {ok, Result};
-        [{Addr, lead}] ->
-            Answer = leading(Cache, [Addr], fun() -> fetch(Client, Addr, Options) end),
+        [{Key, lead}] ->
+            Answer = leading(Cache, [Key], fun() -> fetch(Client, Addr, Agent, Options) end),
             %% Errors are never cached: a 500 or a rate limit says nothing about the address.
-            vpndetection_cache:land(Cache, [{Addr, Answer}]),
+            vpndetection_cache:land(Cache, [{Key, Answer}]),
             Answer;
-        [{Addr, wait}] ->
-            case vpndetection_cache:await(Cache, Ref, [Addr]) of
-                #{Addr := retry} -> shared(Client, Cache, Addr, Options);
-                #{Addr := Answer} -> Answer
+        [{Key, wait}] ->
+            case vpndetection_cache:await(Cache, Ref, [Key]) of
+                #{Key := retry} -> shared(Client, Cache, Addr, Agent, Options);
+                #{Key := Answer} -> Answer
             end
     end.
 
@@ -728,55 +752,66 @@ leading(Cache, Led, Send) ->
             erlang:raise(Class, Reason, Stack)
     end.
 
-fetch(Client, Addr, Options) ->
+fetch(Client, Addr, Agent, Options) ->
     Path = <<"/", (vpndetection_http:escape(Addr))/binary>>,
     Retries = maps:get(retries, Options, maps:get(retries, Client)),
-    case vpndetection_http:get_json(bound(Client, Options), Path, [], Retries, ?LOOKUP) of
+    case vpndetection_http:get_json(bound(Client, Options), Path, agent_query(Agent), Retries, ?LOOKUP) of
         {ok, Body} -> {ok, vpndetection_result:from_wire(Body)};
         {error, Error} -> {error, Error}
     end.
 
-cached(#{cache := undefined}, _Addr) ->
+cached(#{cache := undefined}, _Key) ->
     miss;
-cached(#{cache := Cache}, Addr) ->
-    vpndetection_cache:get(Cache, Addr).
+cached(#{cache := Cache}, Key) ->
+    vpndetection_cache:get(Cache, Key).
 
-batch(Client, Unique, Options, Concurrency) ->
+%% What the cache and the board key an answer on: the address, and the agent sent
+%% with it, since that answer carries a verdict the address's plain one lacks.
+key(Addr, undefined) -> Addr;
+key(Addr, Agent) -> {Addr, Agent}.
+
+batch(Client, Unique, Agents, Options, Concurrency) ->
     {Answered, Pending} = lists:foldl(fun(Ip, {Acc, Rest}) ->
-        case local(Client, Ip) of
+        case local(Client, Ip, maps:get(Ip, Agents, undefined)) of
             {ok, Result} -> {Acc#{Ip => {ok, Result}}, Rest};
             miss -> {Acc, [Ip | Rest]}
         end
     end, {#{}, []}, Unique),
-    maps:merge(Answered, rounds(Client, lists:reverse(Pending), Options, Concurrency, #{})).
+    maps:merge(Answered, rounds(Client, lists:reverse(Pending), Agents, Options, Concurrency, #{})).
 
 %% Every address the batch must ask is boarded BEFORE its chunks are built: the
 %% ones it leads are sent, landing chunk by chunk, so a lookup arriving meanwhile
 %% awaits the chunk carrying its address; the ones a lookup already has in the
 %% air are awaited rather than sent again. An address whose leader died is
 %% boarded again in the next round.
-rounds(_Client, [], _Options, _Concurrency, Acc) ->
+rounds(_Client, [], _Agents, _Options, _Concurrency, Acc) ->
     Acc;
-rounds(#{cache := undefined} = Client, Ips, Options, Concurrency, Acc) ->
-    maps:merge(Acc, send(Client, Ips, Options, Concurrency, fun(_Chunk, _Answers) -> ok end));
-rounds(#{cache := Cache} = Client, Ips, Options, Concurrency, Acc) ->
+rounds(#{cache := undefined} = Client, Ips, Agents, Options, Concurrency, Acc) ->
+    maps:merge(Acc, send(Client, Ips, Agents, Options, Concurrency, fun(_Chunk, _Answers) -> ok end));
+rounds(#{cache := Cache} = Client, Ips, Agents, Options, Concurrency, Acc) ->
     Ref = make_ref(),
-    Boarded = vpndetection_cache:board(Cache, Ips, Ref),
+    KeyOf = fun(Ip) -> key(Ip, maps:get(Ip, Agents, undefined)) end,
+    IpOf = maps:from_list([{KeyOf(Ip), Ip} || Ip <- Ips]),
+    Boarded = [{maps:get(Key, IpOf), Outcome}
+               || {Key, Outcome} <- vpndetection_cache:board(Cache, [KeyOf(Ip) || Ip <- Ips], Ref)],
     Hits = maps:from_list([{Ip, Hit} || {Ip, {ok, _} = Hit} <- Boarded]),
     Led = [Ip || {Ip, lead} <- Boarded],
-    Land = fun(Chunk, Answers) -> vpndetection_cache:land(Cache, [{Ip, maps:get(Ip, Answers)} || Ip <- Chunk]) end,
-    Sent = leading(Cache, Led, fun() -> send(Client, Led, Options, Concurrency, Land) end),
-    Awaited = vpndetection_cache:await(Cache, Ref, [Ip || {Ip, wait} <- Boarded]),
+    Land = fun(Chunk, Answers) ->
+        vpndetection_cache:land(Cache, [{KeyOf(Ip), maps:get(Ip, Answers)} || Ip <- Chunk])
+    end,
+    Sent = leading(Cache, [KeyOf(Ip) || Ip <- Led],
+                   fun() -> send(Client, Led, Agents, Options, Concurrency, Land) end),
+    Awaited = vpndetection_cache:await(Cache, Ref, [KeyOf(Ip) || {Ip, wait} <- Boarded]),
     {Again, Answers} = maps:fold(fun
-        (Ip, retry, {A, D}) -> {[Ip | A], D};
-        (Ip, Answer, {A, D}) -> {A, D#{Ip => Answer}}
+        (Key, retry, {A, D}) -> {[maps:get(Key, IpOf) | A], D};
+        (Key, Answer, {A, D}) -> {A, D#{maps:get(Key, IpOf) => Answer}}
     end, {[], #{}}, Awaited),
-    rounds(Client, lists:reverse(Again), Options, Concurrency,
+    rounds(Client, lists:reverse(Again), Agents, Options, Concurrency,
            maps:merge(maps:merge(maps:merge(Acc, Hits), Sent), Answers)).
 
 %% The addresses sent as chunks, each chunk handed to `Land' as it completes.
-send(Client, Ips, Options, Concurrency, Land) ->
-    ByChunk = dispatch(fun(Chunk) -> lookup_chunk(Client, Chunk, Options) end, Land,
+send(Client, Ips, Agents, Options, Concurrency, Land) ->
+    ByChunk = dispatch(fun(Chunk) -> lookup_chunk(Client, Chunk, Agents, Options) end, Land,
                        chunk(Ips, ?BATCH_MAX), Concurrency, #{}, #{}, #{}),
     maps:fold(fun(_Chunk, Answers, Acc) -> maps:merge(Acc, Answers) end, #{}, ByChunk).
 
@@ -813,10 +848,10 @@ worker_died(Reason) ->
       message => iolist_to_binary(io_lib:format("lookup worker exited: ~p", [Reason]))}.
 
 %% A bogon or a cached answer costs no request; `miss' is what goes to the API.
-local(Client, Ip) ->
+local(Client, Ip, Agent) ->
     case vpndetection_bogon:is_bogon(Ip) of
         true -> {ok, vpndetection_result:bogon(Ip)};
-        false -> cached(Client, Ip)
+        false -> cached(Client, key(Ip, Agent))
     end.
 
 chunk([], _Size) ->
@@ -830,10 +865,15 @@ chunk(List, Size) ->
 %% One POST /batch, mapped back onto the addresses it was asked about. A
 %% chunk-level failure - the call refused, the transport failing, the retries
 %% exhausted - becomes every address's error, exactly as it would have been had
-%% each been looked up alone.
-lookup_chunk(Client, Chunk, Options) ->
+%% each been looked up alone. `user_agents' goes only with a chunk one of whose
+%% addresses has an agent, never as an empty object.
+lookup_chunk(Client, Chunk, Agents, Options) ->
     Retries = maps:get(retries, Options, maps:get(retries, Client)),
-    Body = iolist_to_binary(json:encode(#{<<"ips">> => Chunk})),
+    Payload = case maps:with(Chunk, Agents) of
+        None when map_size(None) =:= 0 -> #{<<"ips">> => Chunk};
+        Sent -> #{<<"ips">> => Chunk, <<"user_agents">> => Sent}
+    end,
+    Body = iolist_to_binary(json:encode(Payload)),
     case vpndetection_http:post_json(bound(Client, Options), <<"/batch">>, Body, Retries, chunk) of
         {ok, Answer} ->
             Results = object(maps:get(<<"results">>, Answer, #{})),
@@ -940,6 +980,8 @@ lookup_shape() ->
               {<<"ssh">>, Ssh, false}, {<<"smtp">>, Smtp, false}, {<<"web">>, {list, Web}, false},
               {<<"dns_resolver">>, DnsResolver, false}, {<<"bittorrent">>, BitTorrent, false},
               {<<"company">>, Company, false}, {<<"hostname">>, string, false}, {<<"abuse">>, Abuse, false},
+              {<<"user_agent">>, {object, [{<<"agent">>, string, true}, {<<"kind">>, string, true},
+                                           {<<"verdict">>, string, true}]}, false},
               {<<"location">>, {object, [{Key, string, true} || Key <- [<<"continent">>, <<"continent_name">>,
                                                                      <<"country">>, <<"country_name">>,
                                                                      <<"timezone">>, <<"currency_code">>,
@@ -1017,15 +1059,66 @@ checked(Options, Call) ->
 check_options(Options) ->
     TimeoutMs = maps:get(timeout_ms, Options, infinity),
     Retries = maps:get(retries, Options, 0),
-    case {valid_timeout(TimeoutMs), valid_retries(Retries)} of
-        {true, true} ->
+    Agent = maps:get(user_agent, Options, undefined),
+    Agents = maps:get(user_agents, Options, #{}),
+    case {valid_timeout(TimeoutMs), valid_retries(Retries), agent_text(Agent), valid_agents(Agents)} of
+        {true, true, {ok, _}, true} ->
             ok;
-        {false, _} ->
+        {false, _, _, _} ->
             refused(io_lib:format("timeout_ms must be infinity or an integer from 1 to ~b, not ~p",
                                   [?MAX_TIMEOUT_MS, TimeoutMs]));
-        {true, false} ->
-            refused(io_lib:format("retries must be an integer of 0 or more, not ~p", [Retries]))
+        {true, false, _, _} ->
+            refused(io_lib:format("retries must be an integer of 0 or more, not ~p", [Retries]));
+        {true, true, error, _} ->
+            refused(io_lib:format("user_agent must be a binary or a string, not ~p", [Agent]));
+        {true, true, {ok, _}, false} ->
+            refused(io_lib:format("user_agents must be a map of address to agent, not ~p", [Agents]))
     end.
+
+%% The agent to send, `undefined' for none: an empty one is none, as the API
+%% reads `user_agent='. One past the spec's 1024 characters is sent whole, since
+%% the API cuts it there and answers.
+agent_text(undefined) ->
+    {ok, undefined};
+agent_text(<<>>) ->
+    {ok, undefined};
+agent_text(Agent) when is_binary(Agent) ->
+    {ok, Agent};
+agent_text(Agent) when is_list(Agent) ->
+    try unicode:characters_to_binary(Agent) of
+        Text when is_binary(Text) -> agent_text(Text);
+        _ -> error
+    catch
+        error:_ -> error
+    end;
+agent_text(_) ->
+    error.
+
+valid_agents(Agents) when is_map(Agents) ->
+    lists:all(fun({Ip, Agent}) ->
+        (is_binary(Ip) orelse is_list(Ip) orelse is_tuple(Ip)) andalso agent_text(Agent) =/= error
+    end, maps:to_list(Agents));
+valid_agents(_) ->
+    false.
+
+%% A call's own agent, once `check_options/1' has passed it.
+agent(Options) ->
+    {ok, Agent} = agent_text(maps:get(user_agent, Options, undefined)),
+    Agent.
+
+agent_query(undefined) -> [];
+agent_query(Agent) -> [{<<"user_agent">>, Agent}].
+
+%% Each address's agent, keyed by the address as sent: an IPv4-mapped address's
+%% by the IPv4 address it carries. The address as sent wins over another
+%% spelling of it, so its own entry is the one kept.
+agents(Options) ->
+    Given = [{address(Ip), Agent} || {Ip, Value} <- maps:to_list(maps:get(user_agents, Options, #{})),
+                                     {ok, Agent} <- [agent_text(Value)], Agent =/= undefined],
+    Respelled = [{vpndetection_bogon:unmapped(Ip), Agent} || {Ip, Agent} <- Given,
+                                                             vpndetection_bogon:unmapped(Ip) =/= Ip],
+    maps:merge(maps:from_list(Respelled), maps:from_list([{Ip, Agent} || {Ip, Agent} <- Given,
+                                                          vpndetection_bogon:unmapped(Ip) =:= Ip])).
 
 %% The build query parameter, none for the live build. A build that is not a
 %% string is refused here rather than crashing the caller in bin/1.

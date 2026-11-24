@@ -2,6 +2,14 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.19.1 - 2026-11-24
+
+### Fixes
+
+- Refuse a cache option no lookup could use when the client is built ([`8c2d86c`](https://github.com/vpndetection-io/sdk-erlang/commit/8c2d86c3c8c7c7190f8922a647af72ebaa452915))
+- Answer a database_downloads limit that is no count with bad_request ([`efd5c82`](https://github.com/vpndetection-io/sdk-erlang/commit/efd5c82d894a4461f9bc26d7b5f28adee22c5360))
+- Middleware: refuse an option no request could use when it is built ([`6cbf9d2`](https://github.com/vpndetection-io/sdk-erlang/commit/6cbf9d21b427e2e120b7aa927eeb17830617d6cc))
+
 ## 3.19.0 - 2026-11-24
 
 ### Features

@@ -117,7 +117,8 @@ new() ->
 %% `{badarg, {api_key, control_character}}', naming the cause and not the key.
 %%
 %% `timeout_ms' is milliseconds from 1 to 4294967295, or `infinity' for no bound,
-%% `retries' an integer of 0 or more and `concurrency' an integer of 1 or more;
+%% `retries' an integer of 0 or more, `concurrency' an integer of 1 or more, and
+%% `cache' `false' or a map whose `max' and `ttl_ms' are integers of 1 or more;
 %% anything else raises `badarg' here rather than failing every call.
 %%
 %% The cache is per client and never shared, because two clients holding
@@ -142,6 +143,8 @@ new(Options) ->
         true -> ok;
         false -> erlang:error({badarg, {concurrency, Concurrency}})
     end,
+    CacheOptions = maps:get(cache, Options, #{}),
+    check_cache(CacheOptions),
     Key = api_key(maps:get(api_key, Options, undefined)),
     case maps:is_key(http, Options) of
         false -> vpndetection_http:ensure_ready();
@@ -150,7 +153,7 @@ new(Options) ->
     #{
         base_url => trim_slashes(bin(maps:get(base_url, Options, ?DEFAULT_BASE_URL))),
         api_key => Key,
-        cache => cache(maps:get(cache, Options, #{})),
+        cache => cache(CacheOptions),
         concurrency => Concurrency,
         retries => Retries,
         timeout_ms => TimeoutMs,
@@ -1159,6 +1162,21 @@ format_name(Format) ->
             {error, #{kind => bad_request, retryable => false,
                       message => iolist_to_binary(Message)}}
     end.
+
+%% A TTL that is no count crashed the cache's process, and with it the caller it
+%% is linked to, on the first answer it stored; a `max' below 1 crashed its
+%% eviction, and 0 for either cached nothing.
+check_cache(false) ->
+    ok;
+check_cache(Options) when is_map(Options) ->
+    lists:foreach(fun(Name) ->
+        case maps:find(Name, Options) of
+            {ok, V} when not is_integer(V); V < 1 -> erlang:error({badarg, {cache, {Name, V}}});
+            _ -> ok
+        end
+    end, [max, ttl_ms]);
+check_cache(Other) ->
+    erlang:error({badarg, {cache, Other}}).
 
 cache(false) ->
     undefined;

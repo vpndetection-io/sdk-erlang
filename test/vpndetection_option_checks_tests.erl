@@ -61,10 +61,33 @@ every_documented_middleware_option_value_still_builds_test_() ->
       ?_assertMatch({ok, _}, vpndetection_middleware:new(#{client => client(), Name => V}))}
      || {Name, V} <- Good].
 
+%%% ------------------------------------------------- a served user_agent verdict
+
+a_served_user_agent_that_is_no_verdict_is_a_retried_server_error_test_() ->
+    Bad = [<<"5">>, <<"\"verified\"">>, <<"[]">>, <<"{\"agent\":\"Googlebot\",\"kind\":\"bot\"}">>,
+           <<"{\"agent\":1,\"kind\":\"bot\",\"verdict\":\"verified\"}">>,
+           <<"{\"agent\":\"Googlebot\",\"kind\":\"bot\",\"verdict\":true}">>],
+    [{"a well-formed verdict is read", fun() ->
+        {Http, _} = counting(answer(<<"{\"agent\":\"Googlebot\",\"kind\":\"bot\",\"verdict\":\"verified\"}">>)),
+        Client = vpndetection:new(#{api_key => <<"k">>, cache => false, http => Http}),
+        ?assertMatch({ok, #{user_agent := #{agent := <<"Googlebot">>, verdict := <<"verified">>}}},
+                     vpndetection:lookup(Client, ?IP, #{user_agent => <<"Googlebot">>}))
+     end}
+     | [{binary_to_list(Verdict), fun() ->
+            {Http, Count} = counting(answer(Verdict)),
+            Client = vpndetection:new(#{api_key => <<"k">>, retries => 1, cache => false, http => Http}),
+            ?assertMatch({error, #{kind := server_error, status := 200, retryable := true}},
+                         vpndetection:lookup(Client, ?IP, #{user_agent => <<"Googlebot">>})),
+            ?assertEqual(2, counters:get(Count, 1))
+        end} || Verdict <- Bad]].
+
 %%% ------------------------------------------------------------------- helpers
 
 answer() ->
     <<"{\"ip\":\"66.249.66.1\",\"is_vpn\":false}">>.
+
+answer(Verdict) ->
+    <<"{\"ip\":\"66.249.66.1\",\"is_vpn\":false,\"user_agent\":", Verdict/binary, "}">>.
 
 counting(Body) ->
     Count = counters:new(1, []),

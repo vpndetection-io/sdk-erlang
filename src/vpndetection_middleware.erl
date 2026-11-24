@@ -37,6 +37,12 @@
     block_condition => vpndetection_condition:conditions(),
     %% Block when the lookup itself fails. Our outage should not become yours.
     fail_closed => boolean(),
+    %% Send the request's own User-Agent with its lookup, and never refuse a
+    %% request whose answer's `user_agent' verdict is `verified', whatever the
+    %% condition matches; the answer is still attached. An absent or empty header
+    %% sends none. Off by default, so the cache holds one answer per address
+    %% rather than one per agent.
+    allow_bots => boolean(),
     on_missing_field => warn | error | ignore,
     %% Where warnings go. Defaults to logger:warning/1.
     on_warn => fun((binary()) -> any())
@@ -60,6 +66,7 @@
     selector := vpndetection_selectors:selector(),
     condition := vpndetection_condition:conditions() | undefined,
     fail_closed := boolean(),
+    allow_bots := boolean(),
     on_missing_field := warn | error | ignore,
     on_warn := fun((binary()) -> any()),
     warned := reference()
@@ -88,6 +95,7 @@ new(Options) ->
                 ),
                 condition => Condition,
                 fail_closed => maps:get(fail_closed, Options, false),
+                allow_bots => maps:get(allow_bots, Options, false) =:= true,
                 on_missing_field => maps:get(on_missing_field, Options, warn),
                 on_warn => OnWarn,
                 warned => make_ref()
@@ -109,8 +117,8 @@ close(_Core) -> ok.
 %%
 %% A failed LOOKUP is not an error here: it lands on the `error' key and the
 %% request is let through. What CAN fail is a misconfiguration - a condition
-%% naming a member the plan does not serve, with `on_missing_field' set to
-%% `error'.
+%% naming a member the plan does not serve, or `allow_bots' sending an agent
+%% that is answered no verdict, with `on_missing_field' set to `error'.
 -spec evaluate(core(), vpndetection_selectors:view()) ->
     {ok, lookup()} | {error, {missing_members, [binary()], binary()}}.
 evaluate(Core, View) ->
@@ -132,8 +140,18 @@ evaluate(Core, View) ->
                 }
             }};
         Ip ->
-            classify(Core, Ip)
+            classify(Core, Ip, agent(Core, View))
     end.
+
+%% The request's own User-Agent, sent only with `allow_bots' on; an absent or
+%% empty header sends none.
+agent(#{allow_bots := true}, View) ->
+    case (maps:get(header, View))(<<"user-agent">>) of
+        undefined -> undefined;
+        Value -> empty_to_undefined(string:trim(iolist_to_binary(Value)))
+    end;
+agent(_Core, _View) ->
+    undefined.
 
 address(Core, View) ->
     case vpndetection_selectors:resolve(maps:get(selector, Core), View) of
@@ -144,10 +162,14 @@ address(Core, View) ->
 empty_to_undefined(<<>>) -> undefined;
 empty_to_undefined(Ip) -> Ip.
 
-classify(Core, Ip) ->
+classify(Core, Ip, Agent) ->
     maybe_warn_bogon(Core, Ip),
     maybe_warn_dead_cache(Core),
-    case vpndetection:lookup(maps:get(client, Core), Ip) of
+    Options = case Agent of
+        undefined -> #{};
+        _ -> #{user_agent => Agent}
+    end,
+    case vpndetection:lookup(maps:get(client, Core), Ip, Options) of
         {error, Error} ->
             {ok, #{
                 blocked => maps:get(fail_closed, Core),
@@ -156,7 +178,10 @@ classify(Core, Ip) ->
                 error => Error
             }};
         {ok, Result} ->
-            decide(Core, Ip, Result)
+            case report_verdict(Core, Agent, Result) of
+                {error, _} = Error -> Error;
+                ok -> decide(Core, Ip, Result)
+            end
     end.
 
 decide(#{condition := undefined}, Ip, Result) ->
@@ -167,9 +192,28 @@ decide(Core, Ip, Result) ->
         {error, _} = Error ->
             Error;
         ok ->
-            Blocked = vpndetection_condition:matches(Condition, Result),
+            Blocked = not verified(Core, Result) andalso vpndetection_condition:matches(Condition, Result),
             {ok, #{blocked => Blocked, ip => Ip, result => Result, error => undefined}}
     end.
+
+%% A crawler its operator vouches for, which `allow_bots' never refuses.
+verified(#{allow_bots := true}, #{user_agent := #{verdict := <<"verified">>}}) -> true;
+verified(_Core, _Result) -> false.
+
+%% An agent was sent and a served answer carries no verdict: a keyless client, or
+%% a free key past its trial, is never answered one, so nothing is let through.
+%% A bogon is answered locally, with none.
+report_verdict(_Core, undefined, _Result) ->
+    ok;
+report_verdict(_Core, _Agent, #{user_agent := _}) ->
+    ok;
+report_verdict(_Core, _Agent, #{is_bogon := true}) ->
+    ok;
+report_verdict(Core, _Agent, _Result) ->
+    report(Core, [<<"user_agent">>],
+           <<"allow_bots sent the request's user agent, and the answer carries no user_agent verdict, "
+             "so no crawler is let through: a keyless client, or a free key past its trial, is never "
+             "answered one">>).
 
 report_missing(#{on_missing_field := ignore}, _Condition, _Result) ->
     ok;
@@ -184,11 +228,17 @@ report_missing(Core, Condition, Result) ->
                 ", which your plan does not include, so those terms can never match. "
                 "An absent member means \"not in your plan\", not \"checked, and no\"."
             ]),
-            case maps:get(on_missing_field, Core) of
-                error -> {error, {missing_members, Missing, Message}};
-                warn -> warn(Core, Message)
-            end
+            report(Core, Missing, Message)
     end.
+
+%% What the plan does not serve, said as `on_missing_field' asks: an error, a
+%% warning once, or nothing.
+report(#{on_missing_field := ignore}, _Missing, _Message) ->
+    ok;
+report(#{on_missing_field := error}, Missing, Message) ->
+    {error, {missing_members, Missing, Message}};
+report(Core, _Missing, Message) ->
+    warn(Core, Message).
 
 %% Expected in local development. Anywhere else it means a proxy sits in front
 %% and its own address is what reached us.

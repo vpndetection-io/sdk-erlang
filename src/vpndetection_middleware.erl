@@ -72,11 +72,45 @@
     warned := reference()
 }.
 
-%% @doc Build a core, refusing a condition that constrains nothing.
+%% @doc Build a core, refusing a condition that constrains nothing and an
+%% option no request could use: `{error, {bad_option, Name, Value, Message}}'.
 -spec new(options()) -> {ok, core()} | {error, term()}.
 new(Options) ->
+    case bad_option(Options) of
+        ok -> build(Options);
+        {Name, Value, Message} -> {error, {bad_option, Name, Value, Message}}
+    end.
+
+%% Each of these used to build: an unknown `on_missing_field' warned, a
+%% `fail_closed' that is no boolean failed open, and a condition that is no map
+%% raised on every request.
+bad_option(Options) ->
+    Checks = [{on_missing_field, warn, fun(V) -> lists:member(V, [warn, error, ignore]) end,
+               <<"on_missing_field must be warn, error or ignore">>},
+              {fail_closed, false, fun is_boolean/1, <<"fail_closed must be true or false">>},
+              {allow_bots, false, fun is_boolean/1, <<"allow_bots must be true or false">>},
+              {block_condition, undefined, fun condition_shaped/1,
+               <<"block_condition must be a map of members, or a list of them">>}],
+    Bad = [{Name, V, Message} || {Name, Default, Valid, Message} <- Checks,
+                                 V <- [maps:get(Name, Options, Default)], not Valid(V)],
+    case Bad of
+        [] -> ok;
+        [First | _] -> First
+    end.
+
+condition_shaped(undefined) -> true;
+condition_shaped(Condition) when is_map(Condition) -> true;
+condition_shaped(Condition) when is_list(Condition) -> lists:all(fun is_map/1, Condition);
+condition_shaped(_) -> false.
+
+build(Options) ->
     Condition = maps:get(block_condition, Options, undefined),
     case vpndetection_condition:validate(Condition) of
+        {error, {constrains_nothing, []}} ->
+            {error,
+                {constrains_nothing, [],
+                    <<"an empty list of conditions blocks nothing; leave block_condition out "
+                        "to only enrich the request">>}};
         {error, {constrains_nothing, One}} ->
             {error,
                 {constrains_nothing, One,
@@ -95,7 +129,7 @@ new(Options) ->
                 ),
                 condition => Condition,
                 fail_closed => maps:get(fail_closed, Options, false),
-                allow_bots => maps:get(allow_bots, Options, false) =:= true,
+                allow_bots => maps:get(allow_bots, Options, false),
                 on_missing_field => maps:get(on_missing_field, Options, warn),
                 on_warn => OnWarn,
                 warned => make_ref()

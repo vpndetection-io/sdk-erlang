@@ -83,9 +83,12 @@ missing_members(Condition, Result) ->
 %% satisfy, so they would match every answer and block all traffic. Nobody
 %% writes that on purpose, and failing when the middleware is built beats
 %% discovering it in production.
--spec validate(conditions() | undefined) -> ok | {error, {constrains_nothing, condition()}}.
+-spec validate(conditions() | undefined) -> ok | {error, {constrains_nothing, condition() | []}}.
 validate(undefined) ->
     ok;
+%% A list of none blocks nothing, while the middleware would report itself blocking.
+validate([]) ->
+    {error, {constrains_nothing, []}};
 validate(Condition) ->
     case lists:dropwhile(fun(One) -> constraint_count(One) > 0 end, wrap(Condition)) of
         [] -> ok;

@@ -2,6 +2,17 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.19.0 - 2026-11-24
+
+### Features
+
+- Send the user agent of the request you are deciding on with a lookup ([`d9be7ce`](https://github.com/vpndetection-io/sdk-erlang/commit/d9be7ce4f5ea0c289346ddb791b72e5be6834f59))
+- Middleware: allow_bots lets a crawler its operator vouches for through ([`06d316f`](https://github.com/vpndetection-io/sdk-erlang/commit/06d316f3891175930506200d45b913375911c1a4))
+
+### Fixes
+
+- Read the bot, service and BitTorrent details' first and last seen days as dates ([`3412075`](https://github.com/vpndetection-io/sdk-erlang/commit/341207562f557799aaeb53d4f9ffdaeb27104f8b))
+
 ## 3.18.0 - 2026-11-22
 
 ### Features

@@ -33,7 +33,7 @@ Every call answers `{ok, Term}` or `{error, Error}`. A client holds a cache, whi
 
 ### With an API key
 
-Every paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, the carrier and satellite flags, the five service flags (SSH, SMTP, web, DNS resolver and BitTorrent), city-level `location`, the `company` and the `abuse` contact, the `bot` detail (whose bot uses the address, what it does and whether its operator vouches for the address), the `user_agent` verdict on a user agent you send with the lookup, and the provider (its ID and its name), confidence and last-seen detail behind each flag. The plans differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.vpndetection.io), then pass it in:
+A paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, the carrier and satellite flags, the five service flags (SSH, SMTP, web, DNS resolver and BitTorrent), city-level `location`, the `company` and the `abuse` contact, the `bot` detail (whose bot uses the address, what it does and whether its operator vouches for the address), the `user_agent` verdict on a user agent you send with the lookup, and the provider (its ID and its name), confidence and last-seen detail behind each flag. Its quotas differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.vpndetection.io), then pass it in:
 
 ```erlang
 Client = vpndetection:new(#{api_key => <<"your-api-key">>}),
@@ -76,8 +76,8 @@ Same answer `lookup` would give for that address, and the same cost against your
 {ok, Entitlement} = vpndetection:my_entitlement(Client),
 Plan = maps:get(<<"plan">>, Entitlement),
 Usage = maps:get(<<"usage">>, Entitlement),
-maps:get(<<"name">>, Plan).        % <<"Max">>, what to show
-maps:get(<<"key">>, Plan).         % <<"max">>, what to compare against
+maps:get(<<"name">>, Plan).        % <<"Data">>, what to show
+maps:get(<<"key">>, Plan).         % <<"data_4">>, what to compare against
 maps:get(<<"requests">>, Usage).   % 580
 maps:get(<<"window_end">>, Usage). % when the allowance resets
 ```

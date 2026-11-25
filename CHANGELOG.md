@@ -2,6 +2,14 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.20.1 - 2026-11-25
+
+### Fixes
+
+- README: one paid plan, Data; the entitlement example names it ([`456620b`](https://github.com/vpndetection-io/sdk-erlang/commit/456620b334442ffbbd074d18148b06786f157ce1))
+- Spec 2026.11.25: descriptions name a paid plan, the entitlement example the Data plan ([`ae6c91b`](https://github.com/vpndetection-io/sdk-erlang/commit/ae6c91b575bc7e7caa18b740890879be15e3a36d))
+- Type docs name a paid plan, now that Data is the only one ([`85e48ef`](https://github.com/vpndetection-io/sdk-erlang/commit/85e48ef22b1b0dd375166124138f92c8ee05e82a))
+
 ## 3.20.0 - 2026-11-24
 
 ### Fixes

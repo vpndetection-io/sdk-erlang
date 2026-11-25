@@ -48,7 +48,7 @@
     tor => detail(),
     cdn => detail(),
     %% Whose bot uses the address, what it does and whether its operator vouches
-    %% for it. Paid plans; `#{}' when `is_bot' is false.
+    %% for it. On a paid plan; `#{}' when `is_bot' is false.
     bot => detail(),
     resproxy => detail(),
     dcproxy => detail(),
@@ -178,7 +178,7 @@
     rpki_status => binary()
 }.
 
-%% The organization the address is assigned to. Paid plans.
+%% The organization the address is assigned to. On a paid plan.
 -type company() :: #{
     name := binary(),
     domain := binary(),
@@ -199,7 +199,7 @@
     verdict := binary()
 }.
 
-%% Who to report abuse from the address to. Paid plans.
+%% Who to report abuse from the address to. On a paid plan.
 -type abuse() :: #{
     email := binary(),
     name => binary(),

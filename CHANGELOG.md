@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.21.0 - 2026-11-26
+
+### Features
+
+- Middleware: allow_bots sends only a crawler's User-Agent, at most four an address ([`8dd80aa`](https://github.com/vpndetection-io/sdk-erlang/commit/8dd80aa2b64be5625d899fc558c5d111e986a40e))
+
 ## 3.20.1 - 2026-11-25
 
 ### Fixes

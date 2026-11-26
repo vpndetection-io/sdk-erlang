@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.21.1 - 2026-11-26
+
+### Fixes
+
+- Middleware: a condition on the verdict is no plan gap for a request that sent no agent ([`b40ff56`](https://github.com/vpndetection-io/sdk-erlang/commit/b40ff5605e650ebb55eeb72569b2ca1b0a2a6da3))
+
 ## 3.21.0 - 2026-11-26
 
 ### Features

@@ -11,6 +11,7 @@
 -module(vpndetection_middleware).
 
 -export([new/1, evaluate/2, blocking/1, close/1]).
+-export([names_crawler/1, max_agents_per_address/0]).
 
 -export_type([core/0, options/0, lookup/0]).
 
@@ -18,6 +19,13 @@
 %% quickly beats holding a visitor while we try again.
 -define(DEFAULT_TIMEOUT_MS, 2500).
 -define(DEFAULT_RETRIES, 0).
+
+%% The most crawler agents one address is looked up with while it is remembered:
+%% its first agent's hour, whatever follows. At most `?AGENT_ADDRESSES' addresses
+%% are remembered, least recently used first.
+-define(MAX_AGENTS_PER_ADDRESS, 4).
+-define(AGENTS_TTL_MS, 3600000).
+-define(AGENT_ADDRESSES, 10000).
 
 -type options() :: #{
     %% An existing client to use. Prefer this if you already hold one: two
@@ -37,11 +45,15 @@
     block_condition => vpndetection_condition:conditions(),
     %% Block when the lookup itself fails. Our outage should not become yours.
     fail_closed => boolean(),
-    %% Send the request's own User-Agent with its lookup, and never refuse a
-    %% request whose answer's `user_agent' verdict is `verified', whatever the
-    %% condition matches; the answer is still attached. An absent or empty header
-    %% sends none. Off by default, so the cache holds one answer per address
-    %% rather than one per agent.
+    %% Send the request's own User-Agent with its lookup when it names a crawler,
+    %% and never refuse a request whose answer's `user_agent' verdict is
+    %% `verified', whatever the condition matches; the answer is still attached.
+    %% Any other agent, an absent or an empty header sends none, since its verdict
+    %% could only be `not_bot'. One address is looked up with at most
+    %% `max_agents_per_address()' crawler agents an hour: past those its lookup
+    %% sends none, and a request passes as a crawler only where the answer's
+    %% `bot' detail says `verified'. Off by default, so the cache holds one answer
+    %% per address rather than one per agent.
     allow_bots => boolean(),
     on_missing_field => warn | error | ignore,
     %% Where warnings go. Defaults to logger:warning/1.
@@ -67,6 +79,8 @@
     condition := vpndetection_condition:conditions() | undefined,
     fail_closed := boolean(),
     allow_bots := boolean(),
+    %% The crawler agents each address was looked up with, when `allow_bots' is on.
+    agents := vpndetection_cache:cache() | undefined,
     on_missing_field := warn | error | ignore,
     on_warn := fun((binary()) -> any()),
     warned := reference()
@@ -119,6 +133,7 @@ build(Options) ->
                         "signals you act on">>}};
         ok ->
             {Client, Owns} = client(Options),
+            AllowBots = maps:get(allow_bots, Options, false),
             OnWarn = maps:get(on_warn, Options, fun(M) -> logger:warning(M) end),
             unset_key(Options, OnWarn),
             {ok, #{
@@ -129,7 +144,8 @@ build(Options) ->
                 ),
                 condition => Condition,
                 fail_closed => maps:get(fail_closed, Options, false),
-                allow_bots => maps:get(allow_bots, Options, false),
+                allow_bots => AllowBots,
+                agents => agents(AllowBots),
                 on_missing_field => maps:get(on_missing_field, Options, warn),
                 on_warn => OnWarn,
                 warned => make_ref()
@@ -141,11 +157,53 @@ build(Options) ->
 blocking(#{condition := undefined}) -> false;
 blocking(_Core) -> true.
 
-%% @doc Release the client this core built. A client PASSED IN stays open,
-%% because its owner is whoever passed it.
+%% @doc Release the client this core built, and the agents it remembers. A
+%% client PASSED IN stays open, because its owner is whoever passed it.
 -spec close(core()) -> ok.
-close(#{owns_client := true, client := Client}) -> vpndetection:close(Client);
-close(_Core) -> ok.
+close(#{agents := Agents} = Core) ->
+    ok = stop_agents(Agents),
+    close_client(Core).
+
+close_client(#{owns_client := true, client := Client}) -> vpndetection:close(Client);
+close_client(_Core) -> ok.
+
+stop_agents(undefined) -> ok;
+stop_agents(Agents) -> vpndetection_cache:stop(Agents).
+
+agents(true) ->
+    {ok, Agents} = vpndetection_cache:start_link(?AGENT_ADDRESSES, ?AGENTS_TTL_MS),
+    Agents;
+agents(false) ->
+    undefined.
+
+%% @doc The most crawler agents one address is looked up with an hour.
+-spec max_agents_per_address() -> pos_integer().
+max_agents_per_address() -> ?MAX_AGENTS_PER_ADDRESS.
+
+%% @doc Whether a `User-Agent' names a crawler, the only kind of agent whose
+%% verdict can be `verified' or `spoofed': its ASCII-lowercased form (`A' to `Z'
+%% only, never a Unicode lowercase) contains one of the corpus's terms. It errs
+%% toward a match, which costs a lookup.
+-spec names_crawler(binary()) -> boolean().
+names_crawler(Agent) ->
+    Lower = << <<(ascii_lower(C))>> || <<C>> <= Agent >>,
+    binary:match(Lower, crawler_pattern()) =/= nomatch.
+
+ascii_lower(C) when C >= $A, C =< $Z -> C + 32;
+ascii_lower(C) -> C.
+
+%% The terms, compiled once: a constant that never changes is what
+%% `persistent_term' is for.
+crawler_pattern() ->
+    Key = {?MODULE, crawler_pattern},
+    case persistent_term:get(Key, undefined) of
+        undefined ->
+            Pattern = binary:compile_pattern(vpndetection_crawlers:terms()),
+            persistent_term:put(Key, Pattern),
+            Pattern;
+        Pattern ->
+            Pattern
+    end.
 
 %% @doc Classify one request.
 %%
@@ -174,18 +232,38 @@ evaluate(Core, View) ->
                 }
             }};
         Ip ->
-            classify(Core, Ip, agent(Core, View))
+            classify(Core, Ip, claim(Core, Ip, View))
     end.
 
-%% The request's own User-Agent, sent only with `allow_bots' on; an absent or
-%% empty header sends none.
-agent(#{allow_bots := true}, View) ->
+%% What the request's User-Agent comes to, with `allow_bots' on: `{agent, A}' to
+%% send, `past' for a crawler's agent an address has no room left to send, and
+%% `none' for no claim at all (off, an absent or empty header, an agent naming no
+%% crawler), which is judged by the condition alone.
+claim(#{allow_bots := true, agents := Agents}, Ip, View) ->
     case (maps:get(header, View))(<<"user-agent">>) of
-        undefined -> undefined;
-        Value -> empty_to_undefined(string:trim(iolist_to_binary(Value)))
+        undefined ->
+            none;
+        Value ->
+            claim_agent(Agents, Ip, empty_to_undefined(string:trim(iolist_to_binary(Value))))
     end;
-agent(_Core, _View) ->
-    undefined.
+claim(_Core, _Ip, _View) ->
+    none.
+
+claim_agent(_Agents, _Ip, undefined) ->
+    none;
+claim_agent(Agents, Ip, Agent) ->
+    case names_crawler(Agent) of
+        false ->
+            none;
+        true ->
+            %% Held as a digest, so what an address costs the cache does not
+            %% grow with the agents it sends.
+            case vpndetection_cache:claim(Agents, Ip, crypto:hash(sha256, Agent),
+                                          ?MAX_AGENTS_PER_ADDRESS) of
+                sent -> {agent, Agent};
+                past -> past
+            end
+    end.
 
 address(Core, View) ->
     case vpndetection_selectors:resolve(maps:get(selector, Core), View) of
@@ -196,12 +274,12 @@ address(Core, View) ->
 empty_to_undefined(<<>>) -> undefined;
 empty_to_undefined(Ip) -> Ip.
 
-classify(Core, Ip, Agent) ->
+classify(Core, Ip, Claim) ->
     maybe_warn_bogon(Core, Ip),
     maybe_warn_dead_cache(Core),
-    Options = case Agent of
-        undefined -> #{};
-        _ -> #{user_agent => Agent}
+    Options = case Claim of
+        {agent, Agent} -> #{user_agent => Agent};
+        _ -> #{}
     end,
     case vpndetection:lookup(maps:get(client, Core), Ip, Options) of
         {error, Error} ->
@@ -212,42 +290,45 @@ classify(Core, Ip, Agent) ->
                 error => Error
             }};
         {ok, Result} ->
-            case report_verdict(Core, Agent, Result) of
+            case report_verdict(Core, Claim, Result) of
                 {error, _} = Error -> Error;
-                ok -> decide(Core, Ip, Result)
+                ok -> decide(Core, Ip, Claim, Result)
             end
     end.
 
-decide(#{condition := undefined}, Ip, Result) ->
+decide(#{condition := undefined}, Ip, _Claim, Result) ->
     {ok, #{blocked => false, ip => Ip, result => Result, error => undefined}};
-decide(Core, Ip, Result) ->
+decide(Core, Ip, Claim, Result) ->
     Condition = maps:get(condition, Core),
     case report_missing(Core, Condition, Result) of
         {error, _} = Error ->
             Error;
         ok ->
-            Blocked = not verified(Core, Result) andalso vpndetection_condition:matches(Condition, Result),
+            Blocked = not verified(Claim, Result) andalso vpndetection_condition:matches(Condition, Result),
             {ok, #{blocked => Blocked, ip => Ip, result => Result, error => undefined}}
     end.
 
-%% A crawler its operator vouches for, which `allow_bots' never refuses.
-verified(#{allow_bots := true}, #{user_agent := #{verdict := <<"verified">>}}) -> true;
-verified(_Core, _Result) -> false.
+%% A crawler its operator vouches for, which `allow_bots' never refuses: by the
+%% verdict on the agent sent, or, where an address was past its agents, by the
+%% answer's own `bot' detail. A request with no claim never passes as one.
+verified({agent, _}, #{user_agent := #{verdict := <<"verified">>}}) -> true;
+verified(past, #{bot := #{verified := true}}) -> true;
+verified(_Claim, _Result) -> false.
 
 %% An agent was sent and a served answer carries no verdict: a keyless client, or
 %% a free key past its trial, is never answered one, so nothing is let through.
 %% A bogon is answered locally, with none.
-report_verdict(_Core, undefined, _Result) ->
+report_verdict(_Core, {agent, _}, #{user_agent := _}) ->
     ok;
-report_verdict(_Core, _Agent, #{user_agent := _}) ->
+report_verdict(_Core, {agent, _}, #{is_bogon := true}) ->
     ok;
-report_verdict(_Core, _Agent, #{is_bogon := true}) ->
-    ok;
-report_verdict(Core, _Agent, _Result) ->
+report_verdict(Core, {agent, _}, _Result) ->
     report(Core, [<<"user_agent">>],
            <<"allow_bots sent the request's user agent, and the answer carries no user_agent verdict, "
              "so no crawler is let through: a keyless client, or a free key past its trial, is never "
-             "answered one">>).
+             "answered one">>);
+report_verdict(_Core, _Claim, _Result) ->
+    ok.
 
 report_missing(#{on_missing_field := ignore}, _Condition, _Result) ->
     ok;

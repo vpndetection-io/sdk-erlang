@@ -17,7 +17,7 @@
 -module(vpndetection_cache).
 -behaviour(gen_server).
 
--export([start_link/2, stop/1, alive/1, get/2, put/3]).
+-export([start_link/2, stop/1, alive/1, get/2, put/3, claim/4]).
 -export([board/3, land/2, abandon/2, await/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -93,6 +93,20 @@ put(#{pid := Pid}, Ip, Result) ->
         exit:_ -> ok
     end.
 
+%% @doc Record `Item' among those held under `Key', at most `Bound' of them, and
+%% say whether it may be used: `sent' for one already held or recorded now, `past'
+%% for a new one once `Bound' are held. An entry ends `TtlMs' after its FIRST
+%% item, whatever is added after, and the check and the record happen in one step
+%% under the owner. A cache whose owner has gone answers `sent': like a miss, the
+%% answer that costs only a lookup.
+-spec claim(cache(), key(), binary(), pos_integer()) -> sent | past.
+claim(#{pid := Pid}, Key, Item, Bound) ->
+    try
+        gen_server:call(Pid, {claim, Key, Item, Bound})
+    catch
+        exit:_ -> sent
+    end.
+
 %% @doc Board addresses that missed: each is a fresh answer, `lead' (send it,
 %% then {@link land/2} it) or `wait' ({@link await/3} it under `Ref').
 %%
@@ -161,6 +175,17 @@ handle_call(entries, _From, State) ->
     {reply, State#state.entries, State};
 handle_call({put, Ip, Result}, _From, State) ->
     {reply, ok, insert(State, Ip, Result)};
+handle_call({claim, Key, Item, Bound}, _From, State) ->
+    case fresh(State, Key) of
+        {ok, Held} ->
+            case {lists:member(Item, Held), length(Held) >= Bound} of
+                {true, _} -> {reply, sent, touch(State, Key)};
+                {false, true} -> {reply, past, State};
+                {false, false} -> {reply, sent, extend(State, Key, [Item | Held])}
+            end;
+        miss ->
+            {reply, sent, insert(State, Key, [Item])}
+    end;
 handle_call({board, Ips, Ref}, {Caller, _Tag}, State) ->
     {Boarded, Next} = lists:mapfoldl(fun(Ip, S) -> board_one(S, Ip, Caller, Ref) end, State, Ips),
     {reply, Boarded, Next};
@@ -266,9 +291,17 @@ fresh(State, Ip) ->
     end.
 
 insert(State, Ip, Result) ->
+    ExpiresAt = erlang:monotonic_time(millisecond) + life_ms(Result, State#state.ttl_ms),
+    store(State, Ip, Result, ExpiresAt).
+
+%% A held entry with a new value and the end it already had.
+extend(State, Ip, Result) ->
+    [{Ip, _Old, ExpiresAt, _Seq}] = ets:lookup(State#state.entries, Ip),
+    store(State, Ip, Result, ExpiresAt).
+
+store(State, Ip, Result, ExpiresAt) ->
     Seq = State#state.seq + 1,
     forget_order(State, Ip),
-    ExpiresAt = erlang:monotonic_time(millisecond) + life_ms(Result, State#state.ttl_ms),
     ets:insert(State#state.entries, {Ip, Result, ExpiresAt, Seq}),
     ets:insert(State#state.order, {Seq, Ip}),
     evict(State),

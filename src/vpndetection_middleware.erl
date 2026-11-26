@@ -300,7 +300,7 @@ decide(#{condition := undefined}, Ip, _Claim, Result) ->
     {ok, #{blocked => false, ip => Ip, result => Result, error => undefined}};
 decide(Core, Ip, Claim, Result) ->
     Condition = maps:get(condition, Core),
-    case report_missing(Core, Condition, Result) of
+    case report_missing(Core, Claim, Condition, Result) of
         {error, _} = Error ->
             Error;
         ok ->
@@ -330,10 +330,10 @@ report_verdict(Core, {agent, _}, _Result) ->
 report_verdict(_Core, _Claim, _Result) ->
     ok.
 
-report_missing(#{on_missing_field := ignore}, _Condition, _Result) ->
+report_missing(#{on_missing_field := ignore}, _Claim, _Condition, _Result) ->
     ok;
-report_missing(Core, Condition, Result) ->
-    case vpndetection_condition:missing_members(Condition, Result) of
+report_missing(Core, Claim, Condition, Result) ->
+    case vpndetection_condition:missing_members(Condition, Result) -- unsent(Core, Claim) of
         [] ->
             ok;
         Missing ->
@@ -345,6 +345,12 @@ report_missing(Core, Condition, Result) ->
             ]),
             report(Core, Missing, Message)
     end.
+
+%% With `allow_bots' on, a request that sent no agent has no verdict to lack,
+%% whatever the plan serves. Off, a condition naming it can never match.
+unsent(#{allow_bots := true}, {agent, _}) -> [];
+unsent(#{allow_bots := true}, _Claim) -> [<<"user_agent">>];
+unsent(_Core, _Claim) -> [].
 
 %% What the plan does not serve, said as `on_missing_field' asks: an error, a
 %% warning once, or nothing.

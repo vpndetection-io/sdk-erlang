@@ -122,6 +122,29 @@ past_the_bound_an_address_its_operator_vouches_for_still_passes_test() ->
     ?assertEqual(none, lists:last(agents(Seen))),
     ?assertMatch(#{blocked := true}, found(Core, ?CHROME)).
 
+%% A request that sent no agent (a browser's, none at all, or one past its address's
+%% bound) has no verdict to lack, whatever the plan serves: a condition on the
+%% verdict is no plan gap there, so `on_missing_field' set to `error' fails nothing.
+%% Off, such a condition can never match, and is still reported.
+a_condition_on_the_verdict_is_no_plan_gap_for_a_request_that_sent_no_agent_test() ->
+    Forged = #{user_agent => #{verdict => <<"spoofed">>}},
+    Options = #{allow_bots => true, block_condition => Forged, on_missing_field => error},
+    [begin
+        {Core, Seen, Warnings} = core(Options),
+        ?assertMatch({ok, #{blocked := false}}, vpndetection_middleware:evaluate(Core, view(Headers))),
+        ?assertEqual([none], agents(Seen)),
+        ?assertEqual([], seen(Warnings))
+     end || Headers <- [#{<<"user-agent">> => ?CHROME}, #{}]],
+    {Core, Seen, Warnings} = core(Options),
+    [?assertMatch(#{blocked := false}, found(Core, crawler(N))) || N <- [1, 2, 3, 4]],
+    ?assertMatch(#{blocked := false}, found(Core, crawler(5))),
+    ?assertEqual(none, lists:last(agents(Seen))),
+    ?assertEqual([], seen(Warnings)),
+
+    {Off, _, OffWarnings} = core(#{block_condition => Forged}),
+    {ok, _} = vpndetection_middleware:evaluate(Off, view(#{})),
+    ?assertMatch([_], [W || W <- seen(OffWarnings), binary:match(W, <<"user_agent">>) =/= nomatch]).
+
 %% Held an hour from an address's first agent, whatever is added after, and no
 %% more than a bounded number of addresses.
 a_cache_holds_claims_from_the_first_for_a_bounded_set_of_keys_test() ->

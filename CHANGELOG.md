@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.22.0 - 2026-11-27
+
+### Features
+
+- Read a keyless answer without the AS's type, and report a condition on it by its path ([`85f90af`](https://github.com/vpndetection-io/sdk-erlang/commit/85f90af2ef40953502cc326dfad7cd3bcf453db3))
+
 ## 3.21.1 - 2026-11-26
 
 ### Fixes

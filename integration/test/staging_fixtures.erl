@@ -135,6 +135,27 @@ assert_shape(Tier, Result, Raw) ->
     case maps:find(<<"hostname">>, Raw) of
         error -> ok;
         {ok, Hostname} -> ?assert(is_binary(Hostname), binary_to_list(<<Tier/binary, ": hostname">>))
+    end,
+    assert_paid_members(Tier, Result, Raw).
+
+%% `is_bot' and the AS's `type' are a paid plan's: Unlimited serves them until the
+%% API stops, so each may be on the wire or off it, and a served one is the right
+%% type and reads as served. An AS without `type' reads `<<>>', its non-optional type.
+assert_paid_members(Tier, Result, Raw) ->
+    case maps:find(<<"is_bot">>, Raw) of
+        {ok, Bot} ->
+            ?assert(is_boolean(Bot), binary_to_list(<<Tier/binary, ": is_bot must be a real boolean">>)),
+            ?assertEqual({Tier, {ok, Bot}}, {Tier, maps:find(is_bot, Result)});
+        error ->
+            ?assertEqual({Tier, error}, {Tier, maps:find(is_bot, Result)})
+    end,
+    case maps:find(<<"asn">>, Raw) of
+        error ->
+            ok;
+        {ok, Asn} ->
+            Type = maps:get(<<"type">>, Asn, <<>>),
+            ?assert(is_binary(Type), binary_to_list(<<Tier/binary, ": the AS's type must be a string">>)),
+            ?assertEqual({Tier, Type}, {Tier, maps:get(type, maps:get(asn, Result))})
     end.
 
 assert_member(Tier, Name, Spec, Result, Raw) ->

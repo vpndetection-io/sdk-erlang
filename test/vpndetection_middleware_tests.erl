@@ -180,6 +180,95 @@ a_missing_member_warns_once_or_fails_on_request_test() ->
                  vpndetection_middleware:evaluate(Strict, view(undefined, #{}))),
     vpndetection_stub:stop(Stub).
 
+%% Unlimited answers the AS without its `type' and without `is_bot', both a paid
+%% plan's. A condition on either never matches, and is reported by its path.
+keyless_answer() ->
+    #{<<"is_vpn">> => false,
+      <<"asn">> => #{<<"asn">> => 13335, <<"name">> => <<"Cloudflare, Inc.">>,
+                     <<"domain">> => <<"cloudflare.com">>, <<"prefix">> => <<"1.1.1.0/24">>,
+                     <<"country">> => <<"US">>, <<"rpki_status">> => <<"valid">>}}.
+
+a_condition_on_the_networks_type_without_a_key_is_reported_by_its_path_test() ->
+    Warnings = collector(),
+    {Stub, Warned} = serving(keyless_answer(),
+                             #{ip_selector => fixed(?PUBLIC_IP),
+                               block_condition => #{asn => #{type => <<"hosting">>}},
+                               on_warn => sink(Warnings)}),
+    [?assertMatch({ok, #{blocked := false}}, vpndetection_middleware:evaluate(Warned, view(undefined, #{})))
+     || _ <- [1, 2]],
+    ?assertMatch([_], seen(Warnings)),
+    ?assertNotEqual(nomatch, binary:match(hd(seen(Warnings)), <<"asn.type">>)),
+
+    {ok, Strict} = core(Stub, #{ip_selector => fixed(?PUBLIC_IP),
+                                block_condition => #{asn => #{type => <<"hosting">>}},
+                                on_missing_field => error}),
+    ?assertMatch({error, {missing_members, [<<"asn.type">>], _}},
+                 vpndetection_middleware:evaluate(Strict, view(undefined, #{}))),
+    vpndetection_stub:stop(Stub).
+
+%% The served members of the same object still match: only the one left out is a gap.
+a_condition_on_the_network_matches_what_a_keyless_answer_serves_test() ->
+    {Stub, Core} = serving(keyless_answer(),
+                           #{ip_selector => fixed(?PUBLIC_IP),
+                             block_condition => #{asn => #{country => <<"US">>}},
+                             on_missing_field => error}),
+    ?assertMatch({ok, #{blocked := true}}, vpndetection_middleware:evaluate(Core, view(undefined, #{}))),
+    {ok, Mixed} = core(Stub, #{ip_selector => fixed(?PUBLIC_IP),
+                               block_condition => #{asn => #{country => <<"US">>, type => <<"hosting">>}},
+                               on_missing_field => error}),
+    ?assertMatch({error, {missing_members, [<<"asn.type">>], _}},
+                 vpndetection_middleware:evaluate(Mixed, view(undefined, #{}))),
+    vpndetection_stub:stop(Stub).
+
+a_paid_plans_network_type_still_blocks_test() ->
+    Body = keyless_answer(),
+    Asn = maps:get(<<"asn">>, Body),
+    {Stub, Core} = serving(Body#{<<"asn">> => Asn#{<<"type">> => <<"hosting">>}},
+                           #{ip_selector => fixed(?PUBLIC_IP),
+                             block_condition => #{asn => #{type => <<"hosting">>}},
+                             on_missing_field => error}),
+    ?assertMatch({ok, #{blocked := true}}, vpndetection_middleware:evaluate(Core, view(undefined, #{}))),
+    vpndetection_stub:stop(Stub).
+
+%% The read `type' is `<<>>', and a condition must not take that for a value: a
+%% cached answer is the same one, and still reports the member unsent.
+a_cached_keyless_answer_still_reports_the_type_and_never_reads_it_as_empty_test() ->
+    Stub = vpndetection_stub:start(#{?PUBLIC_IP => #{status => 200,
+                                                      body => (keyless_answer())#{<<"ip">> => ?PUBLIC_IP}}}),
+    Client = vpndetection:new(#{http => vpndetection_stub:http(Stub), retries => 0}),
+    [begin
+         {ok, Core} = vpndetection_middleware:new(#{client => Client, ip_selector => fixed(?PUBLIC_IP),
+                                                    block_condition => Condition, on_missing_field => error}),
+         [?assertMatch({error, {missing_members, [<<"asn.type">>], _}},
+                       vpndetection_middleware:evaluate(Core, view(undefined, #{})))
+          || _ <- [1, 2]]
+     end || Condition <- [#{asn => #{type => <<"hosting">>}}, #{asn => #{type => <<>>}}]],
+    ?assertEqual(1, vpndetection_stub:calls(Stub)),
+    vpndetection:close(Client),
+    vpndetection_stub:stop(Stub).
+
+a_condition_on_is_bot_without_a_key_is_reported_and_never_matches_test() ->
+    {Stub, Core} = serving(keyless_answer(),
+                           #{ip_selector => fixed(?PUBLIC_IP),
+                             block_condition => #{is_bot => true},
+                             on_missing_field => error}),
+    ?assertMatch({error, {missing_members, [<<"is_bot">>], _}},
+                 vpndetection_middleware:evaluate(Core, view(undefined, #{}))),
+    {ok, Quiet} = core(Stub, #{ip_selector => fixed(?PUBLIC_IP),
+                               block_condition => [#{is_bot => true}, #{asn => #{type => <<"hosting">>}}],
+                               on_missing_field => ignore}),
+    ?assertMatch({ok, #{blocked := false}}, vpndetection_middleware:evaluate(Quiet, view(undefined, #{}))),
+    vpndetection_stub:stop(Stub).
+
+%% An empty detail object is a false flag's real answer, never a plan gap.
+an_empty_detail_object_is_no_gap_test() ->
+    {Stub, Core} = serving((keyless_answer())#{<<"vpn">> => #{}},
+                           #{ip_selector => fixed(?PUBLIC_IP),
+                             block_condition => #{vpn => #{provider => <<"nordvpn">>}},
+                             on_missing_field => error}),
+    ?assertMatch({ok, #{blocked := false}}, vpndetection_middleware:evaluate(Core, view(undefined, #{}))),
+    vpndetection_stub:stop(Stub).
+
 an_unresolvable_address_warns_and_does_not_block_test() ->
     Stub = vpndetection_stub:start(#{}),
     Warnings = collector(),

@@ -28,7 +28,7 @@
     is_tor => boolean(),
     is_cdn => boolean(),
     %% Whether an automated client uses the address: a crawler, an uptime
-    %% monitor, a scanner or a webhook sender. On every answer, every plan.
+    %% monitor, a scanner or a webhook sender. On a paid plan.
     is_bot => boolean(),
     is_resproxy => boolean(),
     is_dcproxy => boolean(),
@@ -167,7 +167,9 @@
 }.
 
 %% The AS announcing the address, on every answer, with or without a key: `asn'
-%% is 0 and the rest empty where no announcement covers it.
+%% is 0 and the rest empty where no announcement covers it. `type', the kind of
+%% network the AS runs, is a paid plan's: an answer that does not serve it reads
+%% `<<>>' here, and `raw' shows the API left it out.
 -type asn() :: #{
     asn := non_neg_integer(),
     name := binary(),
@@ -215,11 +217,18 @@
 %%
 %% Folding over what the body HAS is what preserves absent-versus-false: a key
 %% the server did not send cannot appear in the fold, so no plan-gated member
-%% can be invented as `false'.
+%% can be invented as `false'. The AS's `type' is the one exception, held at its
+%% non-optional type: an answer without it (a keyless one) reads `<<>>' there,
+%% and `raw' shows the API did not send it.
 -spec from_wire(map()) -> result().
 from_wire(Body) when is_map(Body) ->
     Mapped = maps:fold(fun(K, V, Acc) -> Acc#{key(K) => value(V)} end, #{}, Body),
-    Mapped#{is_bogon => maps:get(is_bogon, Mapped, false), raw => Body}.
+    Held = case Mapped of
+        #{asn := #{type := _}} -> Mapped;
+        #{asn := Asn} when is_map(Asn) -> Mapped#{asn => Asn#{type => <<>>}};
+        _ -> Mapped
+    end,
+    Held#{is_bogon => maps:get(is_bogon, Held, false), raw => Body}.
 
 %% @doc The answer a bogon gets, in the full shape the API serves at its widest plan:
 %% `is_bogon' true and every other flag false, every detail empty, an empty `web'

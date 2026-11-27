@@ -109,7 +109,7 @@ new() ->
 %%
 %% `api_key' is optional: without one a lookup is on Unlimited, the free plan,
 %% answering `ip', `is_vpn', the Tor and relay members, `is_anycast', `hostname',
-%% `location' and `asn' with no daily or monthly cap. A batch needs a key on a paid plan. An empty or
+%% `location' and `asn' (without its `type') with no daily or monthly cap. A batch needs a key on a paid plan. An empty or
 %% blank key is no key, and so are `false', which is what `os:getenv/1' answers
 %% for a variable that is not set, and `nil', Elixir's `System.get_env/1' answer
 %% for one. The key is trimmed, so one read from a file
@@ -921,7 +921,8 @@ get_json(Client, Path, Query, Member) ->
 %% be absent or null, and every one present has the spec's type. `standing',
 %% `license_type', `format', `outcome', `confidence' and `tier' stay strings,
 %% open sets as the spec documents them, and a sample row is an object whatever
-%% its columns.
+%% its columns. `plan' marks the AS's `type', which only a paid plan or the trial
+%% answers: absent, never null.
 lookup_shape() ->
     Class = {object, [{<<"provider">>, string, false}, {<<"confidence">>, string, false},
                       {<<"last_seen">>, date, false}, {<<"provider_name">>, string, false}]},
@@ -1004,7 +1005,7 @@ lookup_shape() ->
                                             {<<"last_changed">>, string, false}]},
                false},
               {<<"asn">>, {object, [{<<"asn">>, integer, true}, {<<"name">>, string, true},
-                                     {<<"domain">>, string, true}, {<<"type">>, string, true},
+                                     {<<"domain">>, string, true}, {<<"type">>, string, plan},
                                      {<<"prefix">>, string, true}, {<<"country">>, string, true},
                                      {<<"rpki_status">>, string, true}]}, false}]}.
 

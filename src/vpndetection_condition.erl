@@ -43,39 +43,49 @@ matches(Condition, Result) ->
     Raw = maps:get(raw, Result, #{}),
     lists:any(fun(One) -> matches_object(One, Raw) end, wrap(Condition)).
 
-%% @doc The top-level members a condition names that this answer did not carry.
+%% @doc The members a condition names that this answer did not carry: a top-level
+%% member, or one inside an object every plan gets, by its path (`asn.type').
 %%
 %% A field your plan does not include is absent rather than false, so a condition
-%% naming one can never match and the block would silently never fire. Gating is
-%% per top-level member, which is why only the first path segment is checked: a
-%% detail object present but empty is a real answer meaning the flag is false,
-%% not a plan gap.
+%% naming one can never match and the block would silently never fire. An empty
+%% detail object is a real answer, meaning the flag above it is false, so nothing
+%% inside one is reported: `vpn' present but `#{}' is not a plan gap. Inside a
+%% populated object a member the answer left out is one: the AS's `type' is a paid
+%% plan's, so `#{asn => #{type => <<"hosting">>}}' on a keyless answer is reported
+%% as `asn.type' and never matches.
 %%
 %% A locally answered bogon needs no special case: it is synthesized in the
 %% widest shape, so every member is present and nothing reads as missing.
 -spec missing_members(conditions(), vpndetection_result:result()) -> [binary()].
 missing_members(Condition, Result) ->
     Raw = maps:get(raw, Result, #{}),
-    lists:foldl(
-        fun(One, Acc) ->
-            maps:fold(
-                fun(Member, Want, Inner) ->
-                    Name = key(Member),
-                    case constraint_count(Want) =:= 0
-                        orelse lists:member(Name, Inner)
-                        orelse maps:is_key(Name, Raw)
-                    of
-                        true -> Inner;
-                        false -> Inner ++ [Name]
-                    end
-                end,
-                Acc,
-                One
-            )
+    lists:foldl(fun(One, Acc) -> collect_missing(One, Raw, <<>>, Acc) end, [], wrap(Condition)).
+
+collect_missing(Condition, Served, Prefix, Missing) ->
+    maps:fold(
+        fun(Member, Want, Acc) ->
+            Path = <<Prefix/binary, (key(Member))/binary>>,
+            case constraint_count(Want) of
+                0 -> Acc;
+                _ -> descend(Want, maps:find(key(Member), Served), Path, Acc)
+            end
         end,
-        [],
-        wrap(Condition)
+        Missing,
+        Condition
     ).
+
+descend(_Want, error, Path, Missing) ->
+    case lists:member(Path, Missing) of
+        true -> Missing;
+        false -> Missing ++ [Path]
+    end;
+descend(Want, {ok, Got}, Path, Missing) when is_map(Want), is_map(Got), map_size(Got) > 0 ->
+    case is_bound(Want) of
+        true -> Missing;
+        false -> collect_missing(Want, Got, <<Path/binary, ".">>, Missing)
+    end;
+descend(_Want, {ok, _Got}, _Path, Missing) ->
+    Missing.
 
 %% @doc Refuse a condition that constrains nothing.
 %%

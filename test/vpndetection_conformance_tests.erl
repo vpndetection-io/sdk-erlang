@@ -124,10 +124,21 @@ assert_shape(#{<<"body">> := Body, <<"status">> := Status, <<"expect">> := Expec
 assert_detail(Obj, Expect, Result) ->
     case maps:find(Obj, Expect) of
         {ok, Want} ->
-            assert_member(Obj, Want, maps:get(atom(Obj), Result, missing));
+            assert_member(Obj, held(Obj, Want, Result), maps:get(atom(Obj), Result, missing));
         error ->
             ok
     end.
+
+%% The AS's `type' keeps its non-optional public type, so an answer that does not
+%% serve it reads `<<>>' there, and `raw' still shows it unsent. The expectation
+%% for that read is the corpus's served AS plus that one empty member.
+held(<<"asn">>, #{<<"type">> := _} = Want, _Result) ->
+    Want;
+held(<<"asn">>, Want, Result) ->
+    ?assertNot(maps:is_key(<<"type">>, maps:get(<<"asn">>, maps:get(raw, Result)))),
+    Want#{<<"type">> => <<>>};
+held(_Obj, Want, _Result) ->
+    Want.
 
 assert_member(Obj, Want, Got) when is_map(Want) ->
     ?assertEqual({Obj, true}, {Obj, is_map(Got)}),

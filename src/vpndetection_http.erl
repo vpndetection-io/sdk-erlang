@@ -51,11 +51,12 @@
 %% {wire name, shape, required}: a required one must be present and not null,
 %% while an optional one may be absent or null, and either is checked when it
 %% is there. A member the spec marks nullable is optional here, which is how a
-%% null `bytes' on a refused download stays an answer. `date' is RFC 3339's
+%% null `bytes' on a refused download stays an answer. `plan' is a member only
+%% some plans answer: it may be absent, but never null. `date' is RFC 3339's
 %% full-date and `date_time' its date-time with a zone, each on a day and at a
 %% time that exist.
 -type shape() :: string | integer | number | boolean | object | date | date_time
-               | {list, shape()} | {map_of, shape()} | {object, [{binary(), shape(), boolean()}]}.
+               | {list, shape()} | {map_of, shape()} | {object, [{binary(), shape(), boolean() | plan}]}.
 
 -export_type([shape/0]).
 
@@ -181,6 +182,11 @@ each(Shape, [{Key, Value} | Rest], At) ->
 
 members([], _Object, _At) ->
     ok;
+members([{Key, Shape, plan} | Rest], Object, At) ->
+    case maps:is_key(Key, Object) of
+        true -> members([{Key, Shape, true} | Rest], Object, At);
+        false -> members(Rest, Object, At)
+    end;
 members([{Key, Shape, Required} | Rest], Object, At) ->
     case {maps:get(Key, Object, null), Required} of
         {null, true} -> {error, <<"the API answered with no ", (path([Key | At]))/binary>>};

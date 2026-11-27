@@ -912,6 +912,8 @@ an_answer_of_the_wrong_shape_is_a_retried_server_error_test_() ->
         {lookup, <<"\"country\":\"US\"">>, <<"\"country\":null">>},
         {lookup, <<"\"rpki_status\":\"valid\"">>, <<"\"rpki_status\":null">>},
         {lookup, <<"\"country\":\"US\"">>, <<"\"country\":1">>},
+        {lookup, <<"\"domain\":\"d\",\"type\":\"t\"">>, <<"\"domain\":\"d\",\"type\":null">>},
+        {lookup, <<"\"domain\":\"d\",\"type\":\"t\"">>, <<"\"domain\":\"d\",\"type\":1">>},
         {lookup, <<"\"is_bot\":true">>, <<"\"is_bot\":\"true\"">>},
         {lookup, <<"[\"Googlebot\"]">>, <<"\"Googlebot\"">>},
         {lookup, <<"[\"search_engine\"]">>, <<"[1]">>},
@@ -968,6 +970,53 @@ an_answer_of_the_wrong_shape_is_a_retried_server_error_test_() ->
             ?assertNotEqual(Base, Body),
             assert_unreadable(Body, maps:get(Name, Calls))
         end} || {Name, From, To} <- Cases].
+
+%% An Unlimited answer carries the AS without its `type', a paid plan's member.
+%% It reads, and `type' keeps its non-optional binary type: `<<>>' for what was
+%% not sent, with `raw' showing the API left it out. A `type' that is sent reads
+%% as served. Through 3.21.1 `type' was required, so a keyless lookup failed.
+-define(KEYLESS, <<"{\"ip\":\"1.1.1.1\",\"is_vpn\":false,\"is_relay\":false,\"is_tor\":false,"
+    "\"asn\":{\"asn\":13335,\"name\":\"Cloudflare, Inc.\",\"domain\":\"cloudflare.com\","
+    "\"prefix\":\"1.1.1.0/24\",\"country\":\"US\",\"rpki_status\":\"valid\"}}">>).
+
+a_keyless_answer_without_the_networks_type_reads_test_() ->
+    Reads = fun(Client, Result) ->
+        ?assertMatch({ok, #{asn := #{asn := 13335, name := <<"Cloudflare, Inc.">>, type := <<>>,
+                                     prefix := <<"1.1.1.0/24">>, country := <<"US">>}}}, Result),
+        {ok, #{raw := #{<<"asn">> := Wire}}} = Result,
+        ?assertEqual(false, maps:is_key(<<"type">>, Wire)),
+        vpndetection:close(Client)
+    end,
+    Client = fun(Body) ->
+        vpndetection:new(#{http => fun(_) -> {ok, #{status => 200, headers => [], body => Body}} end,
+                           retries => 0, cache => false})
+    end,
+    [{"lookup", fun() -> C = Client(?KEYLESS), Reads(C, vpndetection:lookup(C, <<"1.1.1.1">>)) end},
+     {"my_ip", fun() -> C = Client(?KEYLESS), Reads(C, vpndetection:my_ip(C)) end},
+     {"a batch entry", fun() ->
+        Body = <<"{\"results\":{\"1.1.1.1\":", ?KEYLESS/binary, "},\"errors\":{}}">>,
+        C = Client(Body),
+        #{<<"1.1.1.1">> := One} = vpndetection:lookup_batch(C, [<<"1.1.1.1">>]),
+        Reads(C, One)
+      end},
+     {"a type that is sent reads as served", fun() ->
+        Body = binary:replace(?KEYLESS, <<"\"prefix\"">>, <<"\"type\":\"hosting\",\"prefix\"">>),
+        ?assertNotEqual(?KEYLESS, Body),
+        C = Client(Body),
+        ?assertMatch({ok, #{asn := #{type := <<"hosting">>}, raw := #{<<"asn">> := #{<<"type">> := <<"hosting">>}}}},
+                     vpndetection:lookup(C, <<"1.1.1.1">>)),
+        vpndetection:close(C)
+      end},
+     {"a cached answer still shows the type unsent", fun() ->
+        C = vpndetection:new(#{http => fun(_) -> {ok, #{status => 200, headers => [], body => ?KEYLESS}} end,
+                               retries => 0}),
+        {ok, _} = vpndetection:lookup(C, <<"1.1.1.1">>),
+        Again = vpndetection:lookup(C, <<"1.1.1.1">>),
+        ?assertMatch({ok, #{asn := #{type := <<>>}}}, Again),
+        {ok, #{raw := #{<<"asn">> := Wire}}} = Again,
+        ?assertEqual(false, maps:is_key(<<"type">>, Wire)),
+        vpndetection:close(C)
+      end}].
 
 %% RFC 3339 allows `t' and `z' in lowercase, and any fraction or offset; through
 %% 3.10.1 a lowercase date-time failed the call as unreadable.

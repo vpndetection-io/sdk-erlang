@@ -307,9 +307,10 @@ store(State, Ip, Result, ExpiresAt) ->
     evict(State),
     State#state{seq = Seq}.
 
-%% A reduced answer, a spent trial's or a reached cap's, ends with a plan change
-%% or a raised cap, so it stays a minute at most rather than the TTL. It is still
-%% cached, or a busy process would send every repeat of an address to the API.
+%% A reduced answer, a spent trial's or a reached cap's, can change as soon as the
+%% organization's trial, plan or cap does, so it stays a minute at most rather
+%% than the TTL. It is still cached, or a busy process would send every repeat of
+%% an address to the API.
 life_ms(#{trial_expired := true}, TtlMs) -> min(TtlMs, ?REDUCED_TTL_MS);
 life_ms(#{cap_reached := true}, TtlMs) -> min(TtlMs, ?REDUCED_TTL_MS);
 life_ms(_Result, TtlMs) -> TtlMs.

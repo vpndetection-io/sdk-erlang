@@ -54,9 +54,12 @@ matches(Condition, Result) ->
 %% plan's, so `#{asn => #{type => <<"hosting">>}}' on a keyless answer is reported
 %% as `asn.type' and never matches.
 %%
-%% A locally answered bogon needs no special case: it is synthesized in the
-%% widest shape, so every member is present and nothing reads as missing.
+%% A bogon's answer reports nothing missing: it is synthesized in the widest
+%% shape, so every member is present but a user agent's verdict, which the API
+%% answers for a bogon and the client does not, and which no plan gap explains.
 -spec missing_members(conditions(), vpndetection_result:result()) -> [binary()].
+missing_members(_Condition, #{is_bogon := true}) ->
+    [];
 missing_members(Condition, Result) ->
     Raw = maps:get(raw, Result, #{}),
     lists:foldl(fun(One, Acc) -> collect_missing(One, Raw, <<>>, Acc) end, [], wrap(Condition)).

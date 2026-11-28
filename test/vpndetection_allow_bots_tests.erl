@@ -2,7 +2,7 @@
 %% origin with its lookup, at most four an address, a crawler its operator vouches
 %% for passes a condition it otherwise meets, a spoofed or not_bot one does not,
 %% and off sends no agent. A bogon peer would be answered locally and pass
-%% vacuously, so the peer here is public.
+%% vacuously, so the peer here is public, bar the one test of what a bogon is not.
 -module(vpndetection_allow_bots_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -145,6 +145,25 @@ a_condition_on_the_verdict_is_no_plan_gap_for_a_request_that_sent_no_agent_test(
     {ok, _} = vpndetection_middleware:evaluate(Off, view(#{})),
     ?assertMatch([_], [W || W <- seen(OffWarnings), binary:match(W, <<"user_agent">>) =/= nomatch]).
 
+%% A bogon peer, local development behind no proxy, is answered locally in the widest
+%% shape and carries no verdict, and that is no plan gap: `on_missing_field' set to
+%% `error' answered a crawler's request there with an error, and `warn' said the plan
+%% lacked `user_agent'. The origin would answer `spoofed' to any agent, so a request
+%% that reached it would be refused.
+a_bogon_peer_with_a_crawler_agent_is_no_plan_gap_test_() ->
+    Forged = #{user_agent => #{verdict => <<"spoofed">>}},
+    [{lists:flatten(io_lib:format("~s, ~s", [Peer, Action])), fun() ->
+        {Core, Seen, Warnings} = core(#{allow_bots => true, block_condition => Forged,
+                                        on_missing_field => Action}, spoofed_any),
+        Evaluated = vpndetection_middleware:evaluate(Core, view(#{<<"user-agent">> => ?GOOGLEBOT}, Peer)),
+        ?assertMatch({ok, #{blocked := false, ip := Peer, error := undefined,
+                            result := #{is_bogon := true}}}, Evaluated),
+        {ok, #{result := Result}} = Evaluated,
+        ?assertEqual([], vpndetection_condition:missing_members(Forged, Result)),
+        ?assertEqual([], [W || W <- seen(Warnings), binary:match(W, [<<"does not include">>, <<"user_agent">>]) =/= nomatch]),
+        ?assertEqual([], agents(Seen))
+     end} || Peer <- [<<"127.0.0.1">>, <<"10.0.0.1">>, <<"::1">>], Action <- [error, warn]].
+
 %% Held an hour from an address's first agent, whatever is added after, and no
 %% more than a bounded number of addresses.
 a_cache_holds_claims_from_the_first_for_a_bounded_set_of_keys_test() ->
@@ -195,7 +214,8 @@ core(Options) ->
 
 %% A core over an origin that answers every address as a VPN and a bot, with the
 %% verdict for the agent sent (none for `no_verdicts'; `verified' for any agent
-%% under `verified_any', with the bot detail a `{verified_any, Bot}' adds),
+%% under `verified_any', with the bot detail a `{verified_any, Bot}' adds, and
+%% `spoofed' for any under `spoofed_any'),
 %% recording each agent that arrived, `none' for a lookup that sent none.
 core(Options, Verdicts) ->
     Recorder = spawn_link(fun() -> record([]) end),
@@ -215,6 +235,7 @@ core(Options, Verdicts) ->
             {no_verdicts, _} -> Answer;
             {_, none} -> Answer;
             {verified_any, _} -> Answer#{<<"user_agent">> => verdict(<<"Examplebot">>, <<"bot">>, <<"verified">>)};
+            {spoofed_any, _} -> Answer#{<<"user_agent">> => verdict(<<"Examplebot">>, <<"bot">>, <<"spoofed">>)};
             {_, ?GOOGLEBOT} -> Answer#{<<"user_agent">> => verdict(<<"Googlebot">>, <<"bot">>, <<"verified">>)};
             {_, ?SPOOFED} -> Answer#{<<"user_agent">> => verdict(<<"Bingbot">>, <<"bot">>, <<"spoofed">>)};
             {_, _} -> Answer#{<<"user_agent">> => verdict(<<"Examplebot">>, <<"bot">>, <<"not_bot">>)}

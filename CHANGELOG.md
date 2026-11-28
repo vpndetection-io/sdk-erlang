@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 3.3.2 are described by their release commits.
 
+## 3.22.1 - 2026-11-28
+
+### Fixes
+
+- Re-pin the spec to 2026.11.27 ([`4d1da24`](https://github.com/vpndetection-io/sdk-erlang/commit/4d1da24f2795ea7eb65023696d4bbb06fe41af30))
+- Middleware: a bogon's answer reports no missing member ([`d674be9`](https://github.com/vpndetection-io/sdk-erlang/commit/d674be97941116ddff4b522657069366ccf80f13))
+
 ## 3.22.0 - 2026-11-27
 
 ### Features
